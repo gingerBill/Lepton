@@ -1,0 +1,7 @@
+const a, b, c = 123, 345, 456
+var x = 123
+type Vector [3]int
+
+proc f() {
+
+}
