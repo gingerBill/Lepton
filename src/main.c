@@ -1,8 +1,10 @@
 #include "common.c"
-#include "utf8.c"
+#include "map.c"
 #include "tokenizer.c"
 #include "ast.c"
 #include "parser.c"
+#include "type.c"
+#include "checker.c"
 
 
 void print_usage(void) {
@@ -25,16 +27,15 @@ int main(int argc, char **argv) {
 		return 1;
 	}
 
+	init_universal_scope();
+
 	{
-		Parser p = {0};
-		ParserError err = init_parser(&p, argv[2]);
-		if (!err) {
-			for (;;) {
-				AstDecl *decl = parse_decl(&p);
-				if (decl == NULL) {
-					break;
-				}
-			}
+		AstPackage *p = MEM_NEW(AstPackage);
+		ParserError err = parse_package(p, argv[2]);
+		if (err == ParserError_None) {
+			Checker c = {0};
+			checker_init(&c);
+			check_package(&c, p);
 		}
 	}
 	return 0;

@@ -60,8 +60,7 @@ TOKEN_KIND(Token__LiteralEnd, ""), \
 	TOKEN_KIND(Token_Semicolon,    ";"), \
 	TOKEN_KIND(Token_Colon,        ":"), \
 	TOKEN_KIND(Token_Comma,        ","), \
-	TOKEN_KIND(Token_Dot,          "."), \
-	TOKEN_KIND(Token_Ellipsis,     ".."), \
+	TOKEN_KIND(Token_Period,       "."), \
 	TOKEN_KIND(Token_Question,     "?"), \
 	TOKEN_KIND(Token_Pointer,      "^"), \
 	TOKEN_KIND(Token_At,           "@"), \
@@ -69,6 +68,7 @@ TOKEN_KIND(Token__LiteralEnd, ""), \
 	TOKEN_KIND(Token_Dec,          "--"), \
 TOKEN_KIND(Token__AssignmentBegin, ""), \
 	TOKEN_KIND(Token_Assign,       "="), \
+	TOKEN_KIND(Token_Define,       ":="), \
 	TOKEN_KIND(Token_AddEq,        "+="), \
 	TOKEN_KIND(Token_SubEq,        "-="), \
 	TOKEN_KIND(Token_MulEq,        "*="), \
@@ -76,40 +76,45 @@ TOKEN_KIND(Token__AssignmentBegin, ""), \
 	TOKEN_KIND(Token_ModEq,        "%="), \
 TOKEN_KIND(Token__AssignmentEnd, ""), \
 TOKEN_KIND(Token__OperatorBegin, ""), \
-	TOKEN_KIND(Token_Add,   "+"), \
-	TOKEN_KIND(Token_Sub,   "-"), \
-	TOKEN_KIND(Token_Mul,   "*"), \
-	TOKEN_KIND(Token_Div,   "/"), \
-	TOKEN_KIND(Token_Mod,   "%"), \
-	TOKEN_KIND(Token_Eq,    "=="), \
-	TOKEN_KIND(Token_NotEq, "!="), \
-	TOKEN_KIND(Token_Lt,    "<"), \
-	TOKEN_KIND(Token_Gt,    ">"), \
-	TOKEN_KIND(Token_LtEq,  "<="), \
-	TOKEN_KIND(Token_GtEq,  ">="), \
+	TOKEN_KIND(Token_Ellipsis, ".."), \
+	TOKEN_KIND(Token_Add,      "+"), \
+	TOKEN_KIND(Token_Sub,      "-"), \
+	TOKEN_KIND(Token_Mul,      "*"), \
+	TOKEN_KIND(Token_Div,      "/"), \
+	TOKEN_KIND(Token_Mod,      "%"), \
+	TOKEN_KIND(Token_Eq,       "=="), \
+	TOKEN_KIND(Token_NotEq,    "!="), \
+	TOKEN_KIND(Token_Lt,       "<"), \
+	TOKEN_KIND(Token_Gt,       ">"), \
+	TOKEN_KIND(Token_LtEq,     "<="), \
+	TOKEN_KIND(Token_GtEq,     ">="), \
 TOKEN_KIND(Token__OperatorEnd, ""), \
 TOKEN_KIND(Token__KeywordBegin, ""), \
-	TOKEN_KIND(Token_var,      "var"), \
-	TOKEN_KIND(Token_const,    "const"), \
-	TOKEN_KIND(Token_type,     "type"), \
-	TOKEN_KIND(Token_proc,     "proc"), \
-	TOKEN_KIND(Token_import,   "import"), \
-	TOKEN_KIND(Token_if,       "if"), \
-	TOKEN_KIND(Token_else,     "else"), \
-	TOKEN_KIND(Token_for,      "for"), \
-	TOKEN_KIND(Token_while,    "while"), \
-	TOKEN_KIND(Token_return,   "return"), \
-	TOKEN_KIND(Token_break,    "break"), \
-	TOKEN_KIND(Token_continue, "continue"), \
-	TOKEN_KIND(Token_goto,     "goto"), \
-	TOKEN_KIND(Token_and,      "and"), \
-	TOKEN_KIND(Token_or,       "or"), \
-	TOKEN_KIND(Token_not,      "not"), \
-	TOKEN_KIND(Token_in,       "in"), \
-	TOKEN_KIND(Token_set,      "set"), \
-	TOKEN_KIND(Token_range,    "range"), \
-	TOKEN_KIND(Token_struct,   "struct"), \
-	TOKEN_KIND(Token_enum,     "enum"), \
+	TOKEN_KIND(Token_var,         "var"), \
+	TOKEN_KIND(Token_const,       "const"), \
+	TOKEN_KIND(Token_type,        "type"), \
+	TOKEN_KIND(Token_proc,        "proc"), \
+	TOKEN_KIND(Token_import,      "import"), \
+	TOKEN_KIND(Token_label,       "label"), \
+	TOKEN_KIND(Token_if,          "if"), \
+	TOKEN_KIND(Token_else,        "else"), \
+	TOKEN_KIND(Token_for,         "for"), \
+	TOKEN_KIND(Token_while,       "while"), \
+	TOKEN_KIND(Token_return,      "return"), \
+	TOKEN_KIND(Token_switch,      "switch"), \
+	TOKEN_KIND(Token_case,        "case"), \
+	TOKEN_KIND(Token_break,       "break"), \
+	TOKEN_KIND(Token_continue,    "continue"), \
+	TOKEN_KIND(Token_fallthrough, "fallthrough"), \
+	TOKEN_KIND(Token_goto,        "goto"), \
+	TOKEN_KIND(Token_and,         "and"), \
+	TOKEN_KIND(Token_or,          "or"), \
+	TOKEN_KIND(Token_not,         "not"), \
+	TOKEN_KIND(Token_in,          "in"), \
+	TOKEN_KIND(Token_set,         "set"), \
+	TOKEN_KIND(Token_range,       "range"), \
+	TOKEN_KIND(Token_struct,      "struct"), \
+	TOKEN_KIND(Token_enum,        "enum"), \
 TOKEN_KIND(Token__KeywordEnd, ""), \
 	TOKEN_KIND(Token_COUNT, "")
 
@@ -137,7 +142,7 @@ typedef struct Tokenizer {
 	char *start;
 	char *end;
 
-	Rune  curr_rune;   // current character
+	Rune  ch;          // current character
 	char *curr;        // character pos
 	char *read_curr;   // pos from start
 	char *line;        // current line pos
@@ -148,7 +153,7 @@ typedef struct Tokenizer {
 } Tokenizer;
 
 typedef struct TokenizerState {
-	Rune  curr_rune;   // current character
+	Rune  ch;           // current character
 	char *curr;        // character pos
 	char *read_curr;   // pos from start
 	char *line;        // current line pos
@@ -167,7 +172,11 @@ typedef enum TokenizerError {
 
 
 
-
+TokenPos token_end_pos(Token t) {
+	TokenPos end = t.pos;
+	end.column += t.string.len;
+	return end;
+}
 
 void tokenizer_err(Tokenizer *t, char *msg, ...) {
 	va_list va;
@@ -236,7 +245,7 @@ TokenizerError init_tokenizer(Tokenizer *t, char const *path) {
 		t->error_count = 0;
 
 		next_rune(t);
-		if (t->curr_rune == RUNE_BOM) {
+		if (t->ch == RUNE_BOM) {
 			next_rune(t); // Ignore BOM at beginning of file
 		}
 	} else {
@@ -258,7 +267,7 @@ void destroy_tokenizer(Tokenizer *t) {
 
 TokenizerState save_tokenizer_state(Tokenizer *t) {
 	TokenizerState state = {0};
-	state.curr_rune  = t->curr_rune;
+	state.ch         = t->ch;
 	state.curr       = t->curr;
 	state.read_curr  = t->read_curr;
 	state.line       = t->line;
@@ -267,7 +276,7 @@ TokenizerState save_tokenizer_state(Tokenizer *t) {
 }
 
 void restore_tokenizer_state(Tokenizer *t, TokenizerState *state) {
-	 t->curr_rune  = state->curr_rune;
+	 t->ch  = state->ch;
 	 t->curr       = state->curr;
 	 t->read_curr  = state->read_curr;
 	 t->line       = state->line;
@@ -281,7 +290,7 @@ void next_rune(Tokenizer *t) {
 		isize width = 1;
 
 		t->curr = t->read_curr;
-		if (t->curr_rune == '\n') {
+		if (t->ch == '\n') {
 			t->line = t->curr;
 			t->line_count++;
 		}
@@ -296,44 +305,34 @@ void next_rune(Tokenizer *t) {
 				tokenizer_err(t, "Illegal byte order mark");
 		}
 		t->read_curr += width;
-		t->curr_rune = rune;
+		t->ch = rune;
 	} else {
 		t->curr = t->end;
-		if (t->curr_rune == '\n') {
+		if (t->ch == '\n') {
 			t->line = t->curr;
 			t->line_count++;
 		}
-		t->curr_rune = RUNE_EOF;
+		t->ch = RUNE_EOF;
 	}
 }
 
 void skip_whitespace(Tokenizer *t) {
-	while (t->curr_rune == ' ' || t->curr_rune == '\t' || t->curr_rune == '\n' && !t->insert_semi || t->curr_rune == '\r') {
+	while (t->ch == ' ' || t->ch == '\t' || t->ch == '\n' && !t->insert_semi || t->ch == '\r') {
 		next_rune(t);
 	}
 }
 
 bool allow_rune(Tokenizer *t, Rune r) {
-	if (t->curr_rune == r) {
+	if (t->ch == r) {
 		next_rune(t);
 		return true;
 	}
 	return false;
 }
 
-int digit_value(Rune r) {
-	if ('0' <= r && r <= '9') {
-		return r - '0';
-	} else if ('a' <= r && r<= 'f') {
-		return r - 'a' + 10;
-	} else if ('A' <= r && r<= 'F') {
-		return r - 'A' + 10;
-	}
-	return 16; // NOTE(bill): Larger than highest possible
-}
 
 void scan_mantissa(Tokenizer *t, int base) {
-	while (digit_value(t->curr_rune) < base || t->curr_rune == '_') {
+	while (digit_value(t->ch) < base || t->ch == '_') {
 		next_rune(t);
 	}
 }
@@ -355,7 +354,7 @@ Token scan_number_to_token(Tokenizer *t, bool seen_decimal_point) {
 		goto exponent;
 	}
 
-	if (t->curr_rune == '0') {
+	if (t->ch == '0') {
 		char *prev = t->curr;
 		next_rune(t);
 		if (allow_rune(t, 'b')) { // Binary
@@ -377,7 +376,7 @@ Token scan_number_to_token(Tokenizer *t, bool seen_decimal_point) {
 			seen_decimal_point = false;
 			scan_mantissa(t, 10);
 
-			if (t->curr_rune == '.' || t->curr_rune == 'e' || t->curr_rune == 'E') {
+			if (t->ch == '.' || t->ch == 'e' || t->ch == 'E') {
 				seen_decimal_point = true;
 				goto fraction;
 			}
@@ -390,11 +389,11 @@ Token scan_number_to_token(Tokenizer *t, bool seen_decimal_point) {
 
 
 fraction:
-	if (t->curr_rune == '.') {
+	if (t->ch == '.') {
 		// HACK(bill): This may be inefficient
 		TokenizerState state = save_tokenizer_state(t);
 		next_rune(t);
-		if (t->curr_rune == '.') {
+		if (t->ch == '.') {
 			// TODO(bill): Clean up this shit
 			restore_tokenizer_state(t, &state);
 			goto end;
@@ -417,25 +416,58 @@ end:
 	return token;
 }
 
+TokenKind token_kind_variant2(Tokenizer *t, TokenKind a, TokenKind b) {
+	if (allow_rune(t, '=')) {
+		return b;
+	}
+	return a;
+}
+
+void scan_comment(Tokenizer *t) {
+	if (t->ch == '/') {
+		//-style comment
+		next_rune(t);
+		while (t->ch != '\n' && t->ch >= 0) {
+			next_rune(t);
+		}
+	} else if (t->ch == '*') {
+		isize comment_depth = 1;
+		next_rune(t);
+		while (t->ch >= 0) {
+			Rune ch = t->ch;
+			next_rune(t);
+			if (ch == '/' && t->ch == '*') {
+				next_rune(t);
+				comment_depth++;
+			} else if (ch == '*' && t->ch == '/') {
+				next_rune(t);
+				comment_depth--;
+				if (comment_depth <= 0) {
+					break;
+				}
+			}
+		}
+	}
+}
+
 Token scan_token(Tokenizer *t) {
 	Token token;
-	Rune curr_rune;
+	Rune ch;
 	bool insert_semi;
-// scan_again:
+scan_again:
 	skip_whitespace(t);
 
 	mem_zero_item(&token);
-	curr_rune = 0;
+	ch = 0;
 	insert_semi = false;
 
 	token.string = make_string(t->curr, 1);
 	token.pos = token_pos(t->fullpath, t->line_count, t->curr-t->line + 1);
 
-	curr_rune = t->curr_rune;
-	if (rune_is_letter(curr_rune)) {
-
+	ch = t->ch;
+	if (rune_is_letter(ch)) {
 		token.kind = Token_Ident;
-		while (rune_is_letter(t->curr_rune) || rune_is_digit(t->curr_rune)) {
+		while (rune_is_letter(t->ch) || rune_is_digit(t->ch)) {
 			next_rune(t);
 		}
 		token.string.len = t->curr - token.string.text;
@@ -457,12 +489,12 @@ Token scan_token(Tokenizer *t) {
 			insert_semi = true;
 			break;
 		}
-	} else if (rune_is_digit(curr_rune)) {
+	} else if (rune_is_digit(ch)) {
 		insert_semi = true;
 		token = scan_number_to_token(t, false);
 	} else {
 		next_rune(t);
-		switch (curr_rune) {
+		switch (ch) {
 		case RUNE_EOF:
 			if (t->insert_semi) {
 				insert_semi = false;
@@ -486,7 +518,6 @@ Token scan_token(Tokenizer *t) {
 			token.kind = Token_CloseParen;
 			insert_semi = true;
 			break;
-
 		case '[':
 			token.kind = Token_OpenBracket;
 			insert_semi = true;
@@ -496,22 +527,25 @@ Token scan_token(Tokenizer *t) {
 			insert_semi = true;
 			break;
 
+		case ':':
+			token.kind = Token_Colon;
+			if (allow_rune(t, '=')) {
+				token.kind = Token_Define;
+			}
+			break;
 		case ';':  token.kind = Token_Semicolon; break;
-		case ':':  token.kind = Token_Colon;     break;
 		case ',':  token.kind = Token_Comma;     break;
 		case '.':
-			token.kind = Token_Dot;
+			token.kind = Token_Period;
 			if (allow_rune(t, '.')) {
 				token.kind = Token_Ellipsis;
+			} else if ('0' <= t->ch && t->ch <= '9') {
+				insert_semi = true;
+				token = scan_number_to_token(t, true);
 			}
 			break;
-		case '?':  token.kind = Token_Question;  break;
-		case '=':
-			token.kind = Token_Assign;
-			if (allow_rune(t, '=')) {
-				token.kind = Token_Eq;
-			}
-			break;
+		case '?': token.kind = Token_Question; break;
+		case '=': token.kind = token_kind_variant2(t, Token_Assign, Token_Eq); break;
 
 		case '^': token.kind = Token_Pointer; break;
 		case '@': token.kind = Token_At;      break;
@@ -534,24 +568,29 @@ Token scan_token(Tokenizer *t) {
 				insert_semi = true;
 			}
 			break;
-		case '*':
-			token.kind = Token_Mul;
-			if (allow_rune(t, '=')) {
-				token.kind = Token_MulEq;
-			}
-			break;
+
+		case '*': token.kind = token_kind_variant2(t, Token_Mul, Token_MulEq); break;
 		case '/':
-			token.kind = Token_Div;
-			if (allow_rune(t, '=')) {
-				token.kind = Token_DivEq;
+			if (t->ch == '/' || t->ch == '*') {
+				if (t->insert_semi && t->ch == '/') {
+					scan_comment(t);
+					t->insert_semi = false;
+					token.kind = Token_Semicolon;
+					token.string = make_string_c("\n");
+					return token;
+				}
+
+				scan_comment(t);
+				t->insert_semi = false;
+				goto scan_again;
+
+			} else {
+				token.kind = token_kind_variant2(t, Token_Div, Token_DivEq);
 			}
 			break;
-		case '%':
-			token.kind = Token_Mod;
-			if (allow_rune(t, '=')) {
-				token.kind = Token_ModEq;
-			}
-			break;
+		case '%': token.kind = token_kind_variant2(t, Token_Mod, Token_ModEq); break;
+		case '<': token.kind = token_kind_variant2(t, Token_Lt,  Token_LtEq);  break;
+		case '>': token.kind = token_kind_variant2(t, Token_Gt,  Token_GtEq);  break;
 
 		case '!':
 			if (allow_rune(t, '=')) {
@@ -560,29 +599,11 @@ Token scan_token(Tokenizer *t) {
 			}
 			goto invalid_rune;
 
-		case '<':
-			token.kind = Token_Lt;
-			if (allow_rune(t, '=')) {
-				token.kind = Token_LtEq;
-			}
-			break;
-		case '>':
-			token.kind = Token_Gt;
-			if (allow_rune(t, '=')) {
-				token.kind = Token_GtEq;
-			}
-			break;
-
 		default:
 		invalid_rune: {
-			String s      = {0};
-			char   str[4] = {0};
-			isize  len    = utf8_encode_rune(str, curr_rune);
-			s.len = len;
-			s.text = mem_alloc(len+1);
-			memmove(s.text, str, len);
-			if (curr_rune != RUNE_BOM) {
-				tokenizer_err(t, "Illegal character: %.*s (%d) ", LIT(s), curr_rune);
+			String s = alloc_string_from_rune(ch);
+			if (ch != RUNE_BOM) {
+				tokenizer_err(t, "Illegal character: %.*s (%d) ", LIT(s), ch);
 			}
 			insert_semi = t->insert_semi;
 			token.kind = Token_Invalid;

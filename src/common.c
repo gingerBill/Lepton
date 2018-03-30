@@ -17,6 +17,8 @@
 	#define STATIC_ASSERT(cond)        STATIC_ASSERT1(cond, __LINE__)
 #endif
 
+#define panic(msg) assert(0 && (msg))
+
 
 #if defined(_MSC_VER)
 	#if _MSC_VER < 1300
@@ -134,6 +136,10 @@ STATIC_ASSERT(sizeof(f64) == 8);
 #endif
 
 
+
+#include "utf8.c"
+
+
 typedef struct String {
 	char *text;
 	isize len;
@@ -245,13 +251,14 @@ void *mem_zero(void *ptr, isize size) {
 #define mem_zero_item(ptr) mem_zero((ptr), sizeof(*ptr));
 
 void *mem_alloc(isize size) {
-	void *ptr;
-	assert(size > 0);
-	ptr = malloc(size);
-	if (!ptr) {
-		fatal("mem_alloc failed");
+	void *ptr = NULL;
+	if (size > 0) {
+		ptr = malloc(size);
+		if (!ptr) {
+			fatal("mem_alloc failed");
+		}
+		mem_zero(ptr, size);
 	}
-	mem_zero(ptr, size);
 	return ptr;
 }
 
@@ -274,8 +281,17 @@ void mem_free(void *ptr) {
 	if (ptr) free(ptr);
 }
 
-#define mem_alloc_array(TYPE_, n) (TYPE_ *)mem_alloc((n)*sizeof(TYPE_))
-#define mem_new(TYPE_) (TYPE_ *)mem_alloc(sizeof(TYPE_))
+#define MEM_ALLOC_ARRAY(TYPE_, n) (TYPE_ *)mem_alloc((n)*sizeof(TYPE_))
+#define MEM_NEW(TYPE_) (TYPE_ *)mem_alloc(sizeof(TYPE_))
+#define MEM_DUP_ARRAY(x, len) mem_dup(x, sizeof(*(x))*(len));
+
+String alloc_string_from_rune(Rune r) {
+	char str[4] = {0};
+	isize len = utf8_encode_rune(str, r);
+	char *text = mem_alloc(len+1);
+	memmove(text, str, len);
+	return make_string(text, len);
+}
 
 
 
@@ -292,12 +308,13 @@ typedef struct BufferHeader {
 #define buf_sizeof(b) ((b) ? buf_len(b)*sizeof(*(b)) : 0)
 
 #define buf_free(b) ((b) ? (mem_free(buf__hdr(b)), (b) = NULL) : 0)
-#define buf_fit(b, n) ((n) <= buf_cap(b) ? 0 : ((b) = buf__grow((b), (n), sizeof(*(b)))))
-#define buf_push(b, ...) (buf_fit((b), 1 + buf_len(b)), (b)[buf__hdr(b)->len++] = (__VA_ARGS__), (b))
-#define buf_pop(b) ((b) : assert(buf_len(b) > 0), buf__hdr(b)->len-- ? 0)
-#define buf_clear(b) ((b) : buf__hdr(b)->len = 0, 0)
+#define buf_reserve(b, n) ((n) <= buf_cap(b) ? 0 : ((b) = buf__grow((b), (n), sizeof(*(b)))))
+#define buf_resize(b, n) (buf_reserve(b, n), (buf__hdr(b)->len = (n)), (b))
+#define buf_push(b, ...) (buf_reserve((b), 1 + buf_len(b)), (b)[buf__hdr(b)->len++] = (__VA_ARGS__), (b))
+#define buf_pop(b) ((b) ? (assert(buf_len(b) > 0), buf__hdr(b)->len--) : 0)
+#define buf_clear(b) ((b) ? buf__hdr(b)->len = 0 : 0)
 
-#define buf_printf(b) ((b) : buf__hdr(b)->len = 0, 0)
+#define buf_printf(b) ((b) ? buf__hdr(b)->len = 0 : 0)
 
 #define for_buf(idx_, b) for(idx_ = 0; idx_ < buf_len(b); idx_++)
 
@@ -328,7 +345,7 @@ char *buf__printf(char *buf, char const *fmt, ...) {
     n = 1 + vsnprintf(buf_end(buf), cap, fmt, args);
     va_end(args);
     if (n > cap) {
-        buf_fit(buf, n + buf_len(buf));
+        buf_reserve(buf, n + buf_len(buf));
         va_start(args, fmt);
         cap = buf_cap(buf) - buf_len(buf);
         n = 1 + vsnprintf(buf_end(buf), cap, fmt, args);
@@ -340,6 +357,25 @@ char *buf__printf(char *buf, char const *fmt, ...) {
 }
 
 
+// Doubly Linked Lists
+#define DLIST_SET(curr_element, next_element)  do { \
+	(curr_element)->next = (next_element);             \
+	(curr_element)->next->prev = (curr_element);       \
+	(curr_element) = (curr_element)->next;             \
+} while (0)
+
+#define DLIST_APPEND(root_element, curr_element, next_element) do { \
+	if ((root_element) == NULL) { \
+		(root_element) = (curr_element) = (next_element); \
+	} else { \
+		DLIST_SET(curr_element, next_element); \
+	} \
+} while (0)
+
+
+
+
+
 // Arena from Per Vognsen
 typedef struct Arena {
 	char *ptr;
@@ -348,7 +384,7 @@ typedef struct Arena {
 } Arena;
 
 #define ARENA_ALIGNMENT 8
-#define ARENA_BLOCK_SIZE 1024
+#define ARENA_BLOCK_SIZE (4*1024*1024)
 
 void arena_grow(Arena *arena, isize min_size) {
 	isize size = MAX(ARENA_BLOCK_SIZE, min_size);
@@ -384,6 +420,17 @@ void arena_free(Arena *arena) {
 
 
 // File stuff
+
+void debug_println(char const *fmt, ...) {
+	FILE *f = stderr;
+	va_list va;
+	va_start(va, fmt);
+	fprintf(f, "Debug: ");
+	vfprintf(f, fmt, va);
+	fprintf(f, "\n");
+	va_end(va);
+}
+
 
 
 isize file_size(FILE *fp) {
@@ -429,7 +476,7 @@ static wchar_t *win32_alloc_utf8_to_ucs2(char const *text, isize *w_len_) {
 		if (w_len_) *w_len_ = w_len;
 		return NULL;
 	}
-	w_text = mem_alloc_array(wchar_t, w_len+1);
+	w_text = MEM_ALLOC_ARRAY(wchar_t, w_len+1);
 	w_len1 = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text, cast(int)len, w_text, cast(int)w_len);
 	if (w_len1 == 0) {
 		mem_free(w_text);
@@ -459,7 +506,7 @@ char *get_fullpath(char const *path) {
 	if (w_len == 0) {
 		return NULL;
 	}
-	w_fullpath = mem_alloc_array(wchar_t, w_len+1);
+	w_fullpath = MEM_ALLOC_ARRAY(wchar_t, w_len+1);
 	GetFullPathNameW(w_path, cast(int)w_len, w_fullpath, NULL);
 	w_fullpath[w_len] = 0;
 	mem_free(w_path);
@@ -469,7 +516,7 @@ char *get_fullpath(char const *path) {
 		mem_free(w_fullpath);
 		return NULL;
 	}
-	new_path = mem_alloc_array(char, new_len+1);
+	new_path = MEM_ALLOC_ARRAY(char, new_len+1);
 	new_len1 = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, w_fullpath, cast(int)w_len, new_path, cast(int)new_len, NULL, NULL);
 	if (new_len1 == 0) {
 		mem_free(w_fullpath);
@@ -490,7 +537,7 @@ char *get_fullpath(char const *path) {
 
 	len = gb_strlen(fullpath);
 
-	result = mem_alloc_array(char, len + 1);
+	result = MEM_ALLOC_ARRAY(char, len + 1);
 	gb_memmove(result, fullpath, len);
 	result[len] = 0;
 	free(p);
@@ -500,3 +547,142 @@ char *get_fullpath(char const *path) {
 }
 
 
+
+
+// Conversions
+
+int digit_value(Rune r) {
+	if ('0' <= r && r <= '9') {
+		return r - '0';
+	} else if ('a' <= r && r<= 'f') {
+		return r - 'a' + 10;
+	} else if ('A' <= r && r<= 'F') {
+		return r - 'A' + 10;
+	}
+	return 16; // NOTE(bill): Larger than highest possible
+}
+
+u64 u64_from_string(String string) {
+	u64 base = 10;
+	bool has_prefix = false;
+	char *text;
+	isize len, i;
+	u64 result;
+
+	if (string.len > 2 && string.text[0] == '0') {
+		switch (string.text[1]) {
+		case 'b': base = 2;  has_prefix = true; break;
+		case 'o': base = 8;  has_prefix = true; break;
+		case 'd': base = 10; has_prefix = true; break;
+		case 'z': base = 12; has_prefix = true; break;
+		case 'x': base = 16; has_prefix = true; break;
+		case 'h': base = 16; has_prefix = true; break;
+		}
+	}
+
+	text = string.text;
+	len = string.len;
+	if (has_prefix) {
+		text += 2;
+		len -= 2;
+	}
+
+	result = 0ull;
+	for (i = 0; i < len; i++) {
+		u64 v;
+		Rune r = cast(Rune)text[i];
+		if (r == '_') {
+			continue;
+		}
+		v = cast(u64)digit_value(r);
+		if (v >= base) {
+			break;
+		}
+		result *= base;
+		result += v;
+	}
+	return result;
+}
+
+f64 float_from_string(String string) {
+	isize i = 0;
+	char *str = string.text;
+	isize len = string.len;
+	bool frac = false;
+	f64 scale = 1.0;
+	f64 value = 0.0;
+
+	f64 sign = 1.0;
+	if (str[i] == '-') {
+		sign = -1.0;
+		i++;
+	} else if (*str == '+') {
+		i++;
+	}
+
+	value = 0.0;
+	for (; i < len; i++) {
+		i64 v;
+		Rune r = cast(Rune)str[i];
+		if (r == '_') {
+			continue;
+		}
+		v = digit_value(r);
+		if (v >= 10) {
+			break;
+		}
+		value *= 10.0;
+		value += v;
+	}
+
+	if (str[i] == '.') {
+		f64 pow10 = 10.0;
+		i++;
+		for (; i < string.len; i++) {
+			i64 v;
+			Rune r = cast(Rune)str[i];
+			if (r == '_') {
+				continue;
+			}
+			v = digit_value(r);
+			if (v >= 10) {
+				break;
+			}
+			value += v/pow10;
+			pow10 *= 10.0;
+		}
+	}
+
+	if ((str[i] == 'e') || (str[i] == 'E')) {
+		u32 exp = 0;
+
+		i++;
+
+		if (str[i] == '-') {
+			frac = true;
+			i++;
+		} else if (str[i] == '+') {
+			i++;
+		}
+
+		for (; i < len; i++) {
+			u32 d;
+			Rune r = cast(Rune)str[i];
+			if (r == '_') {
+				continue;
+			}
+			d = cast(u32)digit_value(r);
+			if (d >= 10) {
+				break;
+			}
+			exp = exp * 10 + d;
+		}
+		if (exp > 308) exp = 308;
+
+		while (exp >= 50) { scale *= 1e50; exp -= 50; }
+		while (exp >=  8) { scale *= 1e8;  exp -=  8; }
+		while (exp >   0) { scale *= 10.0; exp -=  1; }
+	}
+
+	return sign * (frac ? (value / scale) : (value * scale));
+}

@@ -1,7 +1,14 @@
 const a, b, c = 123, 345, 456
 var x = 123
+var y = x * 2
 type Vector [3]int
 
-proc f() {
+proc f() : int {
+	type SmallInt range -10..10
+	var x: SmallInt = 123
+	x = 321
+	y += 23 * 2 / 3
 
+	return 1
 }
+

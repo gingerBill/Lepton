@@ -8,8 +8,7 @@ typedef struct Parser {
 	// <  0: In Control Clause
 	// NOTE(bill): Used to prevent type literals in control clauses
 	isize expr_level;
-
-	buf(AstDecl *) decls;
+	bool  allow_type;
 } Parser;
 
 typedef enum ParserError {
@@ -22,10 +21,11 @@ typedef enum ParserError {
 	ParserError_COUNT
 } ParserError;
 
-
-typedef enum StmtAllowFlag {
-	StmtAllowFlag_Label = 1<<0,
-} StmtAllowFlag;
+typedef struct AstPackage {
+	String    fullpath;
+	AstDecl **decls;
+	isize     decl_count;
+} AstPackage;
 
 
 Token next_token(Parser *p) {
@@ -35,27 +35,35 @@ Token next_token(Parser *p) {
 }
 
 Token expect_token(Parser *p, TokenKind kind) {
-	Token prev = p->prev_token;
 	Token curr = p->curr_token;
 	if (curr.kind != kind) {
 		String c = token_strings[kind];
 		String p = token_strings[curr.kind];
-		error(curr.pos, "Expected %.*s, got %.*s", LIT(c), LIT(p));
-		if (prev.kind == Token_EOF) {
+		error(curr.pos, "expected %.*s, got %.*s", LIT(c), LIT(p));
+		if (curr.kind == Token_EOF) {
 			exit(1);
 		}
 	}
 	next_token(p);
-	return prev;
+	return curr;
 }
 
 Token expect_operator(Parser *p) {
 	Token curr = p->curr_token;
-	if (curr.kind == Token_in) {
+	switch (curr.kind) {
+	case Token_in:
+	case Token_not:
+	case Token_and:
+	case Token_or:
 		// ok
-	} else if (!(Token__OperatorBegin < curr.kind && curr.kind < Token__OperatorEnd)) {
-		error(curr.pos, "Expected an operator, got '%.*s'", LIT(token_strings[curr.kind]));
+		break;
+	default:
+		if (!(Token__OperatorBegin < curr.kind && curr.kind < Token__OperatorEnd)) {
+			error(curr.pos, "expected an operator, got '%.*s'", LIT(token_strings[curr.kind]));
+		}
+		break;
 	}
+		// ok
 	next_token(p);
 	return curr;
 }
@@ -85,6 +93,7 @@ ParserError init_parser(Parser *p, char const *path) {
 
 AstExpr *parse_expr(Parser *p, bool lhs);
 AstType *parse_type(Parser *p);
+AstType *parse_type_attempt(Parser *p);
 AstDecl *parse_decl(Parser *p);
 AstStmt *parse_stmt(Parser *p);
 
@@ -104,10 +113,11 @@ AstExpr *parse_ident(Parser *p) {
 	return ast_expr_ident(expect_token(p, Token_Ident));
 }
 AstExpr *parse_literal(Parser *p, TokenKind kind) {
-	return ast_expr_ident(expect_token(p, kind));
+	return ast_expr_literal(expect_token(p, kind));
 }
 
 AstExpr *parse_operand(Parser *p, bool lhs) {
+	AstType *t = NULL;
 	Token curr = p->curr_token;
 	switch (curr.kind) {
 	case Token_Ident:   return parse_ident(p);
@@ -128,9 +138,70 @@ AstExpr *parse_operand(Parser *p, bool lhs) {
 
 		return ast_expr_paren(open.pos, expr, close.pos);
 	}
+	default:
+		t = parse_type_attempt(p);
+		if (t != NULL) {
+			return ast_expr_type_expr(t);
+		}
+		return NULL;
+	}
+}
+
+AstExpr *parse_call_expr(Parser *p, AstExpr *operand) {
+	return NULL;
+}
+
+AstExpr *parse_atom_expr(Parser *p, AstExpr *operand, bool lhs) {
+	if (operand == NULL) {
+		if (p->allow_type) {
+			return NULL;
+		} else {
+			Token prev = p->curr_token;
+			error(prev.pos, "expected an operand");
+			next_token(p);
+			operand = alloc_ast_expr(AstExpr_Invalid, prev.pos, p->curr_token.pos);
+		}
 	}
 
-	return NULL;
+	for (;;) {
+		switch (p->curr_token.kind) {
+		case Token_OpenParen:
+			operand = parse_call_expr(p, operand);
+			break;
+
+		case Token_Period: {
+			Token token = next_token(p);
+			if (p->curr_token.kind == Token_Ident) {
+				operand = ast_expr_selector(operand, parse_ident(p));
+			} else {
+				error(p->curr_token.pos, "expected an identifier for selector");
+				next_token(p);
+				operand = alloc_ast_expr(AstExpr_Invalid, operand->pos, p->curr_token.pos);
+			}
+			break;
+		}
+
+		case Token_OpenBracket: {
+			Token open = expect_token(p, Token_OpenBracket);
+			AstExpr *index = parse_expr(p, false);
+			Token close = expect_token(p, Token_CloseBracket);
+			operand = ast_expr_index(operand, index, token_end_pos(close));
+			break;
+		}
+
+		case Token_Pointer:
+			operand = ast_expr_deref(operand, expect_token(p, Token_Pointer));
+			break;
+
+		default:
+			goto end;
+		}
+
+		lhs = false;
+	}
+
+end:
+	return operand;
 }
 
 AstExpr *parse_unary_expr(Parser *p, bool lhs) {
@@ -144,7 +215,7 @@ AstExpr *parse_unary_expr(Parser *p, bool lhs) {
 	}
 	}
 
-	return parse_operand(p, lhs);
+	return parse_atom_expr(p, parse_operand(p, lhs), lhs);
 }
 
 
@@ -171,7 +242,7 @@ AstExpr *parse_binary_expr(Parser *p, bool lhs, int prec_in) {
 			} else {
 				AstExpr *right = parse_binary_expr(p, false, prec+1);
 				if (right == NULL) {
-					error(op.pos, "Expected expression on the right-hand side of the binary operator");
+					error(op.pos, "expected expression on the right-hand side of the binary operator");
 				}
 				expr = ast_expr_binary(op, expr, right);
 			}
@@ -222,6 +293,22 @@ AstType *parse_signature(Parser *p, Token token) {
 }
 
 AstType *parse_type(Parser *p) {
+	AstType *t = NULL;
+	Token prev = p->curr_token;
+	bool prev_allow_type = p->allow_type;
+	p->allow_type = true;
+	t = parse_type_attempt(p);
+	p->allow_type = prev_allow_type;
+	if (t == NULL) {
+		error(prev.pos, "expected a type, got %.*s", LIT(prev.string));
+		next_token(p);
+		return alloc_ast_type(AstType_Invalid, prev.pos, p->curr_token.pos);
+	}
+	return t;
+}
+
+
+AstType *parse_type_attempt(Parser *p) {
 	Token curr = p->curr_token;
 	switch (curr.kind) {
 	case Token_Ident:
@@ -263,17 +350,15 @@ AstType *parse_type(Parser *p) {
 	}
 
 	case Token_range: {
-		Token token;
-		AstExpr *expr;
-		token = expect_token(p, Token_range);
-		expr = parse_expr(p, false);
+		Token token = expect_token(p, Token_range);
+		AstExpr *expr = parse_expr(p, false);
 		expr = unparen_expr(expr);
 		if (expr != NULL && expr->kind == AstExpr_Binary &&
 		    expr->binary.op.kind == Token_Ellipsis) {
 			return ast_type_range(token, expr->binary.left, expr->binary.right);
 		}
-		error(p->curr_token.pos, "Expected range expression");
-		return ast_type_new(AstType_Invalid, token.pos, token.pos);
+		error(p->curr_token.pos, "expected range expression");
+		return alloc_ast_type(AstType_Invalid, token.pos, token.pos);
 
 	}
 
@@ -283,9 +368,7 @@ AstType *parse_type(Parser *p) {
 	}
 	}
 
-	error(curr.pos, "Expected a type, got %.*s", LIT(curr.string));
-	next_token(p);
-	return ast_type_new(AstType_Invalid, curr.pos, p->curr_token.pos);
+	return NULL;
 }
 
 AstStmt *parse_body(Parser *p) {
@@ -313,7 +396,7 @@ AstStmt *parse_if_stmt(Parser *p) {
 	p->expr_level = prev_level;
 
 	if (cond == NULL) {
-		error(p->curr_token.pos, "Expected condition for if statement");
+		error(p->curr_token.pos, "expected condition for if statement");
 	}
 
 	body = parse_body(p);
@@ -327,7 +410,7 @@ AstStmt *parse_if_stmt(Parser *p) {
 			else_stmt = parse_body(p);
 			break;
 		default:
-			error(p->curr_token.pos, "Expected if statement block statement");
+			error(p->curr_token.pos, "expected if statement block statement");
 			else_stmt = NULL;
 			break;
 		}
@@ -361,7 +444,7 @@ AstStmt *parse_while_stmt(Parser *p) {
 	p->expr_level = prev_level;
 
 	if (cond == NULL) {
-		error(p->curr_token.pos, "Expected condition for while statement");
+		error(p->curr_token.pos, "expected condition for while statement");
 	}
 
 	body = parse_body(p);
@@ -378,7 +461,7 @@ AstStmt *parse_return_stmt(Parser *p) {
 	return ast_stmt_return(token, expr);
 }
 
-AstStmt *parse_simple_stmt(Parser *p, StmtAllowFlag flags) {
+AstStmt *parse_simple_stmt(Parser *p) {
 	AstExpr *lhs = NULL;
 	AstExpr *rhs = NULL;
 	Token token;
@@ -395,15 +478,6 @@ AstStmt *parse_simple_stmt(Parser *p, StmtAllowFlag flags) {
 		next_token(p);
 		rhs = parse_expr(p, false);
 		return ast_stmt_assign(token, lhs, rhs);
-
-	case Token_Semicolon:
-		if (flags&StmtAllowFlag_Label) {
-			next_token(p);
-			if (lhs->kind != AstExpr_Ident) {
-				error(lhs->begin, "Expected an identifier before colon");
-			}
-			return ast_stmt_label(lhs, token);
-		}
 	}
 	return ast_stmt_expr(lhs);
 }
@@ -417,6 +491,12 @@ AstStmt *parse_stmt(Parser *p) {
 	case Token_import:
 		return ast_stmt_decl(parse_decl(p));
 
+	case Token_label: {
+		Token token = expect_token(p, Token_label);
+		AstExpr *name = parse_ident(p);
+		return ast_stmt_label(token, name);
+	}
+
 	case Token_Ident:
 	case Token_Integer:
 	case Token_Float:
@@ -427,7 +507,7 @@ AstStmt *parse_stmt(Parser *p) {
 	case Token_Add:
 	case Token_Sub:
 	case Token_At:
-		return parse_simple_stmt(p, StmtAllowFlag_Label);
+		return parse_simple_stmt(p);
 
 	case Token_OpenBrace:
 		return parse_body(p);
@@ -435,14 +515,14 @@ AstStmt *parse_stmt(Parser *p) {
 	case Token_Semicolon:
 		return ast_stmt_empty(expect_token(p, Token_Semicolon));
 
-	case Token_if:    return parse_if_stmt(p);
-	case Token_for:   return parse_for_stmt(p);
-	case Token_while: return parse_while_stmt(p);
-
+	case Token_if:     return parse_if_stmt(p);
+	case Token_for:    return parse_for_stmt(p);
+	case Token_while:  return parse_while_stmt(p);
 	case Token_return: return parse_return_stmt(p);
 
 	case Token_break:
-	case Token_continue: {
+	case Token_continue:
+	case Token_fallthrough: {
 		Token token = next_token(p);
 		return ast_stmt_branch(token);
 	}
@@ -485,12 +565,12 @@ AstDecl *parse_decl_var(Parser *p) {
 		} while (p->curr_token.kind != Token_EOF);
 	}
 	if (type == NULL && values == NULL) {
-		error(p->curr_token.pos, "Expected a type after var names");
+		error(p->curr_token.pos, "expected a type after var names");
 	} else if (values != NULL) {
 		int lhs = cast(int)buf_len(names);
 		int rhs = cast(int)buf_len(values);
 		if (lhs != rhs) {
-			error(p->curr_token.pos, "Unbalanced names and values, %d vs %d", lhs, rhs);
+			error(p->curr_token.pos, "unbalanced names and values, %d != %d", lhs, rhs);
 		}
 	}
 
@@ -522,10 +602,10 @@ AstDecl *parse_decl_const(Parser *p) {
 	} while (p->curr_token.kind != Token_EOF);
 
 	{
-		int lhs = cast(int)buf_len(names);
-		int rhs = cast(int)buf_len(values);
+		isize lhs = buf_len(names);
+		isize rhs = buf_len(values);
 		if (lhs != rhs) {
-			error(p->curr_token.pos, "Unbalanced names and values, %d vs %d", lhs, rhs);
+			error(p->curr_token.pos, "unbalanced names and values, %ld vs %ld", lhs, rhs);
 		}
 	}
 
@@ -567,7 +647,41 @@ AstDecl *parse_decl(Parser *p) {
 		return NULL;
 	}
 
-	error(p->curr_token.pos, "Expected a declaration, got %.*s", LIT(token_strings[p->curr_token.kind]));
+	error(p->curr_token.pos, "expected a declaration, got %.*s", LIT(token_strings[p->curr_token.kind]));
 	next_token(p);
 	return NULL;
+}
+
+ParserError parse_package(AstPackage *package, char const *package_path) {
+	Parser p = {0};
+	AstDecl **decls = NULL;
+	ParserError err = init_parser(&p, package_path);
+	package->fullpath = p.fullpath;
+	if (err != ParserError_None) {
+		return err;
+	}
+	while (p.curr_token.kind != Token_EOF) {
+		AstStmt *stmt = parse_stmt(&p);
+		if (stmt == NULL) {
+			break;
+		}
+
+		switch (stmt->kind) {
+		case AstStmt_Decl:
+			buf_push(decls, stmt->decl);
+			break;
+		case AstStmt_Invalid:
+		case AstStmt_Empty:
+			break;
+		default:
+			error(stmt->pos, "only prefixed declarations are allowed at file scope");
+			break;
+		}
+
+	}
+
+	package->decls = AST_DUP_ARRAY(decls, buf_len(decls));
+	package->decl_count = buf_len(decls);
+	buf_free(decls);
+	return err;
 }
