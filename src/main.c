@@ -3,7 +3,7 @@
 #include "tokenizer.c"
 #include "ast.c"
 #include "parser.c"
-#include "type.c"
+#include "const_value.c"
 #include "checker.c"
 
 

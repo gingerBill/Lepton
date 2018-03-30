@@ -103,46 +103,16 @@ Scope *pop_scope(Checker *c) {
 
 
 
-ConstValue const_value_from_literal(Token lit) {
-	ConstValue v = {0};
-	switch (lit.kind) {
-	case Token_Integer:
-		v.kind = ConstValue_Int;
-		v.v_int = cast(i64)u64_from_string(lit.string);
-		break;
-	case Token_Float:
-		v.kind = ConstValue_Float;
-		v.v_float = float_from_string(lit.string);
-		break;
-	case Token_Rune:
-		v.kind = ConstValue_Rune;
-		panic("TODO: rune literal");
-		break;
-	case Token_String:
-		v.kind = ConstValue_String;
-		panic("TODO: string literal");
-		break;
-	default: panic("invalid literal constant"); break;
-	}
-	return v;
-}
-
 Type *type_from_literal(Token lit) {
 	switch (lit.kind) {
-	case Token_Integer:
-		return t_untyped_int;
-	case Token_Float:
-		return t_untyped_float;
-	case Token_Rune:
-		return t_untyped_rune;
-	case Token_String:
-		return t_untyped_string;
+	case Token_Integer: return t_untyped_int;
+	case Token_Float:   return t_untyped_float;
+	case Token_Rune:    return t_untyped_rune;
+	case Token_String:  return t_untyped_string;
 	}
 	panic("invalid literal constant");
 	return NULL;
 }
-
-
 
 
 
@@ -569,6 +539,204 @@ Entity *check_ident(Checker *c, AstExpr *expr) {
 	return e;
 }
 
+bool check_unary_op(Checker *c, Operand *o, Token op) {
+	if (o->type == NULL) {
+		error(o->expr->pos, "expression has no value");
+		return false;
+	}
+
+	switch (op.kind) {
+	case Token_Add:
+	case Token_Sub:
+		if (!is_type_numeric(o->type)) {
+			error(op.pos, "operator %.*s is not allowed with non-numeric expressions");
+			return false;
+		}
+		break;
+	case Token_Xor:
+		if (!is_type_integer(o->type)) {
+			error(op.pos, "operator %.*s is not allowed with non-integer expressions");
+			return false;
+		}
+		break;
+	case Token_not:
+		if (!is_type_boolean(o->type)) {
+			error(op.pos, "operator %.*s is not allowed with non-boolean expressions");
+			return false;
+		}
+		break;
+	default:
+		error(op.pos, "unknown operator %.*s", LIT(op.string));
+		return false;
+	}
+	return true;
+}
+
+Operand check_unary_expr(Checker *c, Operand *o, Token op) {
+	Operand x = {0};
+	x.expr = o->expr;
+	switch (op.kind) {
+	case Token_At:
+		if (o->mode != Addressing_Var) {
+			error(op.pos, "cannot take the pointer address of a non variable");
+			x.mode = Addressing_Invalid;
+			return x;
+		}
+		x.mode = Addressing_Value;
+		x.type = alloc_type_ptr(o->type);
+		return x;
+	}
+
+	if (!check_unary_op(c, o, op)) {
+		x.mode = Addressing_Invalid;
+		return x;
+	}
+
+	if (o->mode == Addressing_Const) {
+		Type *t = o->type;
+		if (!is_type_constant_type(t)) {
+			error(op.pos, "invalid type for constant unary expression");
+			x.mode = Addressing_Invalid;
+			return x;
+		} else {
+			int precision = 0;
+			if (is_type_unsigned(t)) {
+				precision = cast(int)(8 * type_size_of(t));
+			}
+			if (op.kind == Token_Xor && is_type_untyped(t)) {
+				error(op.pos, "bitwise not cannot be applied to untyped constants");
+				x.mode = Addressing_Invalid;
+				return x;
+			}
+			if (op.kind == Token_Sub && is_type_unsigned(t)) {
+				error(op.pos, "an unsigned constant cannot be negated");
+				x.mode = Addressing_Invalid;
+				return x;
+			}
+
+			x.type = t;
+			x.value = const_value_unary(op.kind, o->value, precision);
+			x.mode = Addressing_Const;
+			return x;
+		}
+	}
+	x.mode = Addressing_Value;
+	return x;
+}
+
+bool convert_to_typed(Checker *c, Operand *x, Type *target_type) {
+	assert(target_type != NULL);
+	if (x->mode == Addressing_Invalid ||
+	    x->mode == Addressing_Type ||
+	    !is_type_untyped(x->type) ||
+	    target_type == t_invalid) {
+		return false;
+	}
+
+	if (is_type_untyped(target_type)) {
+		if (is_type_numeric(x->type) && is_type_numeric(target_type)) {
+			// IMPORTANT NOTE(bill): Order does matter
+			if (x->type->kind < target_type->kind) {
+				x->type = target_type;
+			}
+			return true;
+		} else if (x->type->kind != target_type->kind) {
+			return true;
+		}
+		return true;
+	}
+
+	switch (target_type->kind) {
+	case Type_Bool:
+	case Type_Int:
+	case Type_Rune:
+	case Type_Float:
+	case Type_String:
+		break;
+	default:
+		x->mode = Addressing_Invalid;
+		error(x->expr->pos, "cannot convert expression to typed");
+		return false;
+	}
+
+	x->type = target_type;
+	return true;
+}
+
+Operand check_comparison(Checker *c, Operand x, Operand y, Token op) {
+	// TODO(bill): check_comparison
+	return x;
+}
+
+Operand check_binary_expr(Checker *c, Operand x, Operand y, Token op) {
+	if (x.mode == Addressing_Invalid) {
+		return x;
+	}
+	if (y.mode == Addressing_Invalid) {
+		x.mode = Addressing_Invalid;
+		x.expr = y.expr;
+		return x;
+	}
+
+	if (!convert_to_typed(c, &x, y.type)) {
+		return x;
+	}
+	if (!convert_to_typed(c, &y, x.type)) {
+		x.mode = Addressing_Invalid;
+		x.expr = y.expr;
+		return x;
+	}
+
+	if (op.kind == Token_Ellipsis) {
+		error(op.pos, "TODO: range expressions are not yet supported");
+		return x;
+	}
+
+	if (token_is_comparison(op.kind)) {
+		return check_comparison(c, x, y, op);
+	}
+
+	if (!are_types_equal(x.type, y.type)) {
+		if (x.type != t_invalid &&
+		    y.type != t_invalid) {
+			error(op.pos, "mismatched types in binary expression");
+		}
+		x.mode = Addressing_Invalid;
+		return x;
+	}
+
+	switch (op.kind) {
+	case Token_Div:
+	case Token_Mod:
+	case Token_DivEq:
+	case Token_ModEq:
+		if ((x.mode == Addressing_Const || is_type_integer(x.type)) &&
+		    y.mode == Addressing_Const) {
+			bool fail = false;
+			switch (y.value.kind) {
+			case ConstValue_Integer:
+				if (y.value.v_int == 0 ) {
+					fail = true;
+				}
+				break;
+			case ConstValue_Float:
+				if (y.value.v_float == 0.0) {
+					fail = true;
+				}
+				break;
+			}
+
+			if (fail) {
+				error(y.expr->pos, "division by zero not allowed");
+				x.mode = Addressing_Invalid;
+				return x;
+			}
+		}
+	}
+
+	return x;
+}
+
 Operand check_expr_base_internal(Checker *c, AstExpr *expr, Type *type_hint) {
 	Operand o = {0};
 	o.expr = expr;
@@ -645,13 +813,18 @@ Operand check_expr_base_internal(Checker *c, AstExpr *expr, Type *type_hint) {
 		return o;
 	}
 	case AstExpr_Unary: {
-		Operand x = check_expr(c, expr->unary.expr);
-		return x;
+		Operand x = check_expr_base(c, expr->unary.expr, type_hint);
+		if (x.mode == Addressing_Invalid) {
+			x.expr = expr;
+			return x;
+		}
+		return check_unary_expr(c, &x, expr->unary.op);
 	}
 	case AstExpr_Binary: {
+		Token op = expr->binary.op;
 		Operand x = check_expr(c, expr->binary.left);
 		Operand y = check_expr(c, expr->binary.right);
-		return x;
+		return check_binary_expr(c, x, y, op);
 	}
 	case AstExpr_Ternary: {
 		Operand cond = check_expr(c, expr->ternary.cond);
@@ -792,8 +965,7 @@ Type *check_type(Checker *c, AstType *type_expr) {
 			upper = temp;
 		}
 		error(type_expr->pos, "TODO: range type");
-		// return alloc_type_range(lower, upper);
-		break;
+		return alloc_type_range(lower, upper);
 	}
 	case AstType_Pointer: {
 		Type *elem = check_type(c, type_expr->pointer.elem);
@@ -960,3 +1132,8 @@ void check_proc_body(Checker *c, DeclInfo *decl, Type *type, AstStmt *body) {
 		assert(pop_scope(c) == scope);
 	}
 }
+
+
+
+
+

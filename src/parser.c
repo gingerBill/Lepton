@@ -206,9 +206,10 @@ end:
 
 AstExpr *parse_unary_expr(Parser *p, bool lhs) {
 	switch (p->curr_token.kind) {
+	case Token_At:
 	case Token_Add:
 	case Token_Sub:
-	case Token_At: {
+	case Token_not: {
 		Token op = next_token(p);
 		AstExpr *expr = parse_unary_expr(p, lhs);
 		return ast_expr_unary(op, expr);

@@ -8,6 +8,7 @@
 #include <stdarg.h>
 #include <string.h>
 #include <assert.h>
+#include <math.h>
 
 #ifndef STATIC_ASSERT
 	#define STATIC_ASSERT3(cond, msg) typedef char static_assertion_##msg[(!!(cond))*2-1]
@@ -547,6 +548,49 @@ char *get_fullpath(char const *path) {
 }
 
 
+// Math
+i32 bit_set_count32(u32 x) {
+	x -= ((x >> 1) & 0x55555555);
+	x = (((x >> 2) & 0x33333333) + (x & 0x33333333));
+	x = (((x >> 4) + x) & 0x0f0f0f0f);
+	x += (x >> 8);
+	x += (x >> 16);
+
+	return cast(i32)(x & 0x0000003f);
+}
+i64 bit_set_count64(u64 x) {
+	u32 a = *(cast(u32 *)&x);
+	u32 b = *(cast(u32 *)&x + 1);
+	return bit_set_count32(a) + bit_set_count32(b);
+}
+
+u64 ceil_log2(u64 x) {
+	i64 y = cast(i64)(x & (x-1));
+	y |= -y;
+	y >>= 64-1;
+	x |= x >> 1;
+	x |= x >> 2;
+	x |= x >> 4;
+	x |= x >> 8;
+	x |= x >> 16;
+	x |= x >> 32;
+	return cast(u64)(bit_set_count64(x) - 1 - y);
+}
+
+i64 next_pow2(i64 n) {
+	if (n <= 0) {
+		return 0;
+	}
+	n--;
+	n |= n >> 1;
+	n |= n >> 2;
+	n |= n >> 4;
+	n |= n >> 8;
+	n |= n >> 16;
+	n |= n >> 32;
+	n++;
+	return n;
+}
 
 
 // Conversions

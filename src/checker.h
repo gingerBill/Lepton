@@ -1,7 +1,7 @@
 typedef struct Entity Entity;
+typedef struct Type Type;
 typedef struct DeclInfo DeclInfo;
 typedef struct Scope Scope;
-typedef struct ConstValue ConstValue;
 typedef struct Operand Operand;
 typedef struct Checker Checker;
 typedef struct CheckerContext CheckerContext;
@@ -9,7 +9,6 @@ typedef struct CheckerContext CheckerContext;
 typedef enum EntityKind  EntityKind;
 typedef enum EntityState EntityState;
 typedef enum EntityFlag  EntityFlag;
-typedef enum ConstValueKind ConstValueKind;
 typedef enum AddressingMode AddressingMode;
 
 
@@ -36,27 +35,7 @@ struct Scope {
 
 static Scope *universal_scope = NULL;
 
-enum ConstValueKind {
-	ConstValue_Invalid,
 
-	ConstValue_Bool,
-	ConstValue_Int,
-	ConstValue_Float,
-	ConstValue_Rune,
-	ConstValue_String,
-
-	ConstValue_COUNT
-};
-struct ConstValue {
-	ConstValueKind kind;
-	union {
-		bool   v_bool;
-		i64    v_int;
-		f64    v_float;
-		Rune   v_rune;
-		String v_string;
-	};
-};
 
 
 enum EntityKind {
@@ -187,13 +166,13 @@ bool is_operand_value(Operand const *o);
 Scope *alloc_scope(Scope *parent, AstStmt *node);
 void scope_destroy(Scope *scope);
 
-ConstValue const_value_from_literal(Token lit);
 Type *type_from_literal(Token lit);
 
-Operand check_expr(Checker *c, AstExpr *expr);
 void    check_decl(Checker *c, AstDecl *decl);
 Type *  check_type(Checker *c, AstType *type);
 void    check_stmt(Checker *c, AstStmt *stmt, u32 flags);
+Operand check_expr(Checker *c, AstExpr *expr);
+Operand check_expr_base(Checker *c, AstExpr *expr, Type *type_hint);
 
 
 Entity *alloc_entity(EntityKind kind, AstExpr *ident, AstDecl *node);
@@ -203,3 +182,6 @@ Entity *scope_insert_entity(Scope *s, Entity *e);
 
 void add_entity(Checker *c, Entity *e);
 void add_entity_use(Checker *c, AstExpr *ident, Entity *e);
+
+
+#include "type.c"

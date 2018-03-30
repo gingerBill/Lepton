@@ -82,6 +82,7 @@ TOKEN_KIND(Token__OperatorBegin, ""), \
 	TOKEN_KIND(Token_Mul,      "*"), \
 	TOKEN_KIND(Token_Div,      "/"), \
 	TOKEN_KIND(Token_Mod,      "%"), \
+	TOKEN_KIND(Token_Xor,      "~"), \
 	TOKEN_KIND(Token_Eq,       "=="), \
 	TOKEN_KIND(Token_NotEq,    "!="), \
 	TOKEN_KIND(Token_Lt,       "<"), \
@@ -225,6 +226,21 @@ int token_precedence(TokenKind t) {
 		return 7;
 	}
 	return 0;
+}
+
+bool token_is_comparison(TokenKind op) {
+	switch (op) {
+	case Token_and:
+	case Token_or:
+	case Token_Eq:
+	case Token_NotEq:
+	case Token_Lt:
+	case Token_Gt:
+	case Token_LtEq:
+	case Token_GtEq:
+		return true;
+	}
+	return false;
 }
 
 
@@ -549,7 +565,7 @@ scan_again:
 
 		case '^': token.kind = Token_Pointer; break;
 		case '@': token.kind = Token_At;      break;
-
+		case '~': token.kind = Token_Xor;     break;
 		case '+':
 			token.kind = Token_Add;
 			if (allow_rune(t, '=')) {

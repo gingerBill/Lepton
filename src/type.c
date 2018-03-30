@@ -1,5 +1,6 @@
 typedef struct Type Type;
 typedef struct TypeRange TypeRange;
+typedef struct TypeAggregate TypeAggregate;
 typedef struct Entity Entity;
 typedef struct Scope Scope;
 typedef struct ConstValue ConstValue;
@@ -7,14 +8,15 @@ typedef struct ConstValue ConstValue;
 typedef enum TypeKind TypeKind;
 typedef enum TypeFlag TypeFlag;
 
+// IMPORTANT NOTE(bill): Order does matter
 enum TypeKind {
 	Type_Invalid,
 
 	Type_Bool,
 	Type_Int,
+	Type_Rune,
 	Type_Float,
 	Type_String,
-	Type_Rune,
 	Type_Ptr,
 	Type_Array,
 	Type_Slice,
@@ -35,6 +37,12 @@ enum TypeFlag {
 struct TypeRange {
 	i64 lower;
 	i64 upper;
+};
+
+struct TypeAggregate {
+	Scope *  scope;
+	Entity **fields;
+	isize    field_count;
 };
 
 struct Type {
@@ -59,16 +67,8 @@ struct Type {
 			isize      range_count;
 		} set;
 		TypeRange range;
-		struct {
-			Type ** fields;
-			isize   field_count;
-			String *names; // field_count or NULL
-		} structure;
-		struct {
-			i64 *   values;
-			isize   value_count;
-			String *names; // value_count or NULL
-		} enumeration;
+		TypeAggregate structure;
+		TypeAggregate enumeration;
 		struct {
 			Scope *  scope;
 			Entity **fields;
@@ -111,6 +111,7 @@ i64 const PTR_ALIGN = 8;
 
 void complete_type(Type *t);
 Type *default_type(Type *t);
+bool are_types_equal(Type *x, Type *y);
 
 i64 type_size_of(Type *t) {
 	t = default_type(t);
@@ -124,11 +125,42 @@ i64 type_align_of(Type *t) {
 }
 
 bool is_type_untyped(Type *t) {
+	if (t == NULL) return false;
 	return t->flags & TypeFlag_Untyped;
+}
+bool is_type_unsigned(Type *t) {
+	if (t == NULL) return false;
+	return t->flags & TypeFlag_Unsigned;
 }
 bool is_type_integer(Type *t) {
 	if (t == NULL) return false;
 	return t->kind == Type_Int;
+}
+bool is_type_boolean(Type *t) {
+	if (t == NULL) return false;
+	return t->kind == Type_Bool;
+}
+bool is_type_numeric(Type *t) {
+	if (t == NULL) return false;
+	switch (t->kind) {
+	case Type_Int:
+	case Type_Float:
+	case Type_Rune:
+		return true;
+	}
+	return false;
+}
+bool is_type_constant_type(Type *t) {
+	if (t == NULL) return false;
+	switch (t->kind) {
+	case Type_Bool:
+	case Type_Int:
+	case Type_Float:
+	case Type_Rune:
+	case Type_String:
+		return true;
+	}
+	return false;
 }
 
 
@@ -256,4 +288,86 @@ Type *alloc_type_proc(Scope *scope, Entity **fields, isize field_count, Type *re
 	type->proc.field_count = field_count;
 	type->proc.ret = ret;
 	return type;
+}
+
+i64 calc_range_size(i64 lower, i64 upper) {
+	i64 diff = upper-lower;
+	i64 bits = ceil_log2(diff);
+	i64 bytes = next_pow2((bits+7)/8);
+	return bytes;
+}
+
+Type *alloc_type_range(i64 lower, i64 upper) {
+	CachedTypeRange cached = {0};
+	Type *type = NULL;
+	isize i;
+	for (i = 0; i < buf_len(cached_type_ranges); i++) {
+		CachedTypeRange *c = &cached_type_ranges[i];
+		if (c->lower == lower && c->upper == upper) {
+			return c->type;
+		}
+	}
+
+	type = alloc_type(Type_Range);
+	type->size  = calc_range_size(lower, upper);
+	type->align = type->size;
+	type->range.lower = lower;
+	type->range.upper = upper;
+	cached.type = type;
+	cached.lower = lower;
+	cached.upper = upper;
+	buf_push(cached_type_ranges, cached);
+	return type;
+}
+
+
+bool are_types_equal(Type *x, Type *y) {
+	if (x == NULL && y != NULL) return false;
+	if (x != NULL && y == NULL) return false;
+	if (x == y) return true;
+	if (x->kind == y->kind) {
+		switch (x->kind) {
+		case Type_Proc:
+			if (x->proc.field_count == y->proc.field_count &&
+			    are_types_equal(x->proc.ret, y->proc.ret)) {
+				isize i;
+				for (i = 0; i < x->proc.field_count; i++) {
+					Type *a = x->proc.fields[i]->type;
+					Type *b = y->proc.fields[i]->type;
+					if (!are_types_equal(a, b)) {
+						return false;
+					}
+				}
+				return true;
+			}
+			return false;
+		case Type_Struct:
+			if (x->structure.field_count == y->structure.field_count) {
+				isize i;
+				for (i = 0; i < x->structure.field_count; i++) {
+					Type *a = x->structure.fields[i]->type;
+					Type *b = y->structure.fields[i]->type;
+					if (!are_types_equal(a, b)) {
+						return false;
+					}
+				}
+				return true;
+			}
+			return false;
+		case Type_Enum:
+			if (x->enumeration.field_count == y->enumeration.field_count) {
+				isize i;
+				for (i = 0; i < x->enumeration.field_count; i++) {
+					Type *a = x->enumeration.fields[i]->type;
+					Type *b = y->enumeration.fields[i]->type;
+					if (!are_types_equal(a, b)) {
+						return false;
+					}
+				}
+				return true;
+			}
+			return false;
+		}
+	}
+	return false;
 }
