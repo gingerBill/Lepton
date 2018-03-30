@@ -519,7 +519,7 @@ AstDecl *ast_decl_var(Token token, AstExpr **lhs, isize lhs_count, AstType *type
 	AstDecl *d;
 	TokenPos end;
 
-	assert(lhs_count > 0);
+	ASSERT(lhs_count > 0);
 	end = lhs[lhs_count-1]->end;
 	if (rhs_count > 0) {
 		end = rhs[rhs_count-1]->end;
@@ -538,7 +538,7 @@ AstDecl *ast_decl_const(Token token, AstExpr **lhs, isize lhs_count, AstType *ty
 	AstDecl *d;
 	TokenPos end;
 
-	assert(lhs_count > 0);
+	ASSERT(lhs_count > 0);
 	end = lhs[lhs_count-1]->end;
 	if (rhs_count > 0) {
 		end = rhs[rhs_count-1]->end;

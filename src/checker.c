@@ -10,11 +10,12 @@ bool is_blank_name(String name) {
 
 Type *alloc_universal_type(char *name, TypeKind kind, i64 size, i64 align, u32 type_flags) {
 	Entity *e = NULL;
+	Entity *prev = NULL;
 	Type *t = NULL;
 	AstExpr *ident = NULL;
 	Token token = {Token_Ident};
 
-	assert(universal_scope != NULL);
+	ASSERT(universal_scope != NULL);
 
 	token.string = make_string_c(name);
 	ident = ast_expr_ident(token);
@@ -26,7 +27,8 @@ Type *alloc_universal_type(char *name, TypeKind kind, i64 size, i64 align, u32 t
 	e = alloc_entity(Entity_Type, ident, NULL);
 	e->type = t;
 	e->state = EntityState_Resolved;
-	scope_insert_entity(universal_scope, e);
+	prev = scope_insert_entity(universal_scope, e);
+	ASSERT(prev == NULL);
 	return t;
 }
 
@@ -34,7 +36,7 @@ void init_universal_scope(void) {
 	universal_scope = alloc_scope(NULL, NULL);
 	universal_scope->flags |= ScopeFlag_Global;
 
-	assert(t_untyped_bool == NULL);
+	ASSERT(t_untyped_bool == NULL);
 	t_untyped_bool   = alloc_universal_type("untyped bool",   Type_Bool,   -1, -1, TypeFlag_Untyped);
 	t_untyped_int    = alloc_universal_type("untyped int",    Type_Int,    -1, -1, TypeFlag_Untyped);
 	t_untyped_float  = alloc_universal_type("untyped float",  Type_Float,  -1, -1, TypeFlag_Untyped);
@@ -43,7 +45,15 @@ void init_universal_scope(void) {
 
 	t_bool   = alloc_universal_type("bool",   Type_Bool,   1, 1, 0);
 	t_int    = alloc_universal_type("int",    Type_Int,    PTR_SIZE, PTR_ALIGN, 0);
-	t_uint   = alloc_universal_type("int",    Type_Int,    PTR_SIZE, PTR_ALIGN, TypeFlag_Unsigned);
+	t_uint   = alloc_universal_type("uint",   Type_Int,    PTR_SIZE, PTR_ALIGN, TypeFlag_Unsigned);
+	t_i8     = alloc_universal_type("i8",     Type_Int,    1, 1, 0);
+	t_i16    = alloc_universal_type("i16",    Type_Int,    2, 2, 0);
+	t_i32    = alloc_universal_type("i32",    Type_Int,    4, 4, 0);
+	t_i64    = alloc_universal_type("i64",    Type_Int,    8, 8, 0);
+	t_u8     = alloc_universal_type("u8",     Type_Int,    1, 1, TypeFlag_Unsigned);
+	t_u16    = alloc_universal_type("u16",    Type_Int,    2, 2, TypeFlag_Unsigned);
+	t_u32    = alloc_universal_type("u32",    Type_Int,    4, 4, TypeFlag_Unsigned);
+	t_u64    = alloc_universal_type("u64",    Type_Int,    8, 8, TypeFlag_Unsigned);
 	t_f32    = alloc_universal_type("f32",    Type_Float,  4, 4, 0);
 	t_f64    = alloc_universal_type("f64",    Type_Float,  8, 8, 0);
 	t_string = alloc_universal_type("string", Type_String, 2*PTR_SIZE, PTR_ALIGN, 0);
@@ -53,8 +63,111 @@ void init_universal_scope(void) {
 
 void checker_init(Checker *c) {
 	c->global_scope = alloc_scope(universal_scope, NULL);
+	c->global_scope->flags |= ScopeFlag_Global;
 	c->context.scope = c->global_scope;
-	universal_scope->flags |= ScopeFlag_Global;
+
+	map_init(&c->expr_info_map);
+}
+
+
+static Arena expr_info_arena = {0};
+
+void *expr_info_arena_alloc(isize size) {
+	if (size <= 0) {
+		return NULL;
+	} else {
+		void *ptr = arena_alloc(&expr_info_arena, size);
+		mem_zero(ptr, size);
+		return ptr;
+	}
+}
+
+void add_expr_info(Checker *c, AstExpr *expr, AddressingMode mode, Type *type, ConstValue value) {
+	if (expr == NULL || mode == Addressing_Invalid) {
+		return;
+	}
+
+	if (mode == Addressing_Const && type == t_invalid) {
+		PANIC("add_expr_info - invalid type");
+	} else {
+		HashKey key = hash_ptr(expr);
+		ExprInfo *info = map_get(&c->expr_info_map, key);
+		if (info == NULL) {
+			info = cast(ExprInfo *)expr_info_arena_alloc(sizeof(ExprInfo));
+		}
+		info->mode  = mode;
+		info->type  = type;
+		info->value = value;
+		map_set(&c->expr_info_map, key, info);
+	}
+}
+
+ExprInfo *get_expr_info(Checker *c, AstExpr *expr) {
+	if (expr) {
+		return cast(ExprInfo *)map_get(&c->expr_info_map, hash_ptr(expr));
+	}
+	return NULL;
+}
+
+void update_expr_value(Checker *c, AstExpr *expr, ConstValue value) {
+	if (expr) {
+		ExprInfo *found = get_expr_info(c, expr);
+		if (found) found->value = value;
+	}
+}
+
+void remove_expr_info(Checker *c, AstExpr *expr) {
+	if (expr) {
+		map_remove(&c->expr_info_map, hash_ptr(expr));
+	}
+}
+
+
+void update_expr_type(Checker *c, AstExpr *expr, Type *type, bool final) {
+	ExprInfo *found = get_expr_info(c, expr);
+	ExprInfo old = {0};
+	if (found == NULL) return;
+	old = *found;
+	switch (expr->kind) {
+	case AstExpr_Paren:
+		update_expr_type(c, expr->paren.expr, type, final);
+		break;
+	case AstExpr_Unary:
+		if (old.value.kind != ConstValue_Invalid) {
+			// NOTE(bill): if 'expr' is constant, the operands will be constant too.
+			// They don't need to be updated as they will be updated later and
+			// checked at the end of general checking stage.
+			break;
+		}
+		update_expr_type(c, expr->unary.expr, type, final);
+		break;
+	case AstExpr_Binary:
+		if (old.value.kind != ConstValue_Invalid) {
+			// See above note in unary expr case
+			break;
+		}
+		if (token_is_comparison(expr->binary.op.kind)) {
+			// NOTE(bill): Do nothing as the types are fine
+		} else {
+			update_expr_type(c, expr->binary.left,  type, final);
+			update_expr_type(c, expr->binary.right, type, final);
+		}
+		break;
+	}
+
+	if (!final && is_type_untyped(type)) {
+		old.type = type;
+		add_expr_info(c, expr, old.mode, old.type, old.value);
+		return;
+	}
+
+#if 0
+	// We need to remove it and then give it a new one (this will be needed later)
+	remove_expr_info(c, expr);
+	add_expr_info(c, expr, old.mode, type, old.value);
+#else
+	add_expr_info(c, expr, old.mode, type, old.value);
+#endif
 }
 
 
@@ -110,7 +223,7 @@ Type *type_from_literal(Token lit) {
 	case Token_Rune:    return t_untyped_rune;
 	case Token_String:  return t_untyped_string;
 	}
-	panic("invalid literal constant");
+	PANIC("invalid literal constant");
 	return NULL;
 }
 
@@ -118,7 +231,7 @@ Type *type_from_literal(Token lit) {
 
 Entity *alloc_entity(EntityKind kind, AstExpr *ident, AstDecl *node) {
 	Entity *e = MEM_NEW(Entity);
-	assert(ident->kind == AstExpr_Ident);
+	ASSERT(ident->kind == AstExpr_Ident);
 	e->kind  = kind;
 	e->name  = ident->ident.token.string;
 	e->ident = ident;
@@ -173,7 +286,7 @@ Entity *scope_lookup_entity(Scope *scope, String name) {
 }
 
 Entity *scope_insert_entity(Scope *s, Entity *e) {
-	assert(s != NULL);
+	ASSERT(s != NULL);
 	if (e != NULL) {
 		String name = e->name;
 		Entity *found = NULL;
@@ -198,13 +311,13 @@ void add_entity(Checker *c, Entity *e) {
 	buf_push(c->entities, e);
 	scope_insert_entity(c->context.scope, e);
 	if (e->ident != NULL) {
-		assert(e->ident->kind == AstExpr_Ident);
+		ASSERT(e->ident->kind == AstExpr_Ident);
 		e->ident->ident.entity = e;
 	}
 }
 
 void add_entity_use(Checker *c, AstExpr *ident, Entity *e) {
-	assert(ident->kind == AstExpr_Ident);
+	ASSERT(ident->kind == AstExpr_Ident);
 	e->flags |= EntityFlag_Used;
 	ident->ident.entity = e;
 }
@@ -213,8 +326,8 @@ void add_entity_use(Checker *c, AstExpr *ident, Entity *e) {
 
 void collect_entity(Checker *c, AstDecl *decl) {
 	isize i;
-	assert(decl != NULL);
-	assert(c->context.scope != NULL);
+	ASSERT(decl != NULL);
+	ASSERT(c->context.scope != NULL);
 
 	switch (decl->kind) {
 	case AstDecl_Var:
@@ -310,7 +423,7 @@ void collect_entity(Checker *c, AstDecl *decl) {
 
 void check_entity_decl(Checker *c, Entity *e) {
 	CheckerContext prev_context = c->context;
-	assert (e != NULL);
+	ASSERT (e != NULL);
 	if (e->state == EntityState_Resolved) {
 		return;
 	}
@@ -318,7 +431,7 @@ void check_entity_decl(Checker *c, Entity *e) {
 		error(e->ident->pos, "Illegal declaration cycle of `%.*s`", LIT(e->name));
 		return;
 	}
-	assert(e->state == EntityState_Unresolved);
+	ASSERT(e->state == EntityState_Unresolved);
 
 	e->type = t_invalid;
 	e->state = EntityState_Processing;
@@ -356,10 +469,10 @@ void check_entity_decl(Checker *c, Entity *e) {
 	}
 	case Entity_Proc: {
 		e->type = check_type(c, e->decl->type_expr);
-		assert(e->type->kind == Type_Proc);
+		ASSERT(e->type->kind == Type_Proc);
 		e->scope = e->type->proc.scope;
 
-		if (e->node) assert(e->node->kind == AstDecl_Proc);
+		if (e->node) ASSERT(e->node->kind == AstDecl_Proc);
 		if (e->node->proc_decl.body) {
 			ProcInfo proc_info = {0};
 			proc_info.decl = e->decl;
@@ -399,8 +512,13 @@ void check_package(Checker *c, AstPackage *p) {
 
 
 
-void check_block(Checker *c, AstStmt *stmt) {
-	assert(stmt->kind == AstStmt_Block);
+void check_block(Checker *c, AstStmt *stmt, u32 flags) {
+	isize i;
+	ASSERT(stmt->kind == AstStmt_Block);
+	for (i = 0; i < stmt->block.stmt_count; i++) {
+		AstStmt *s = stmt->block.stmts[i];
+		check_stmt(c, s, flags);
+	}
 }
 
 
@@ -422,7 +540,7 @@ void check_stmt(Checker *c, AstStmt *stmt, u32 flags) {
 		check_expr(c, stmt->expr);
 		break;
 	case AstStmt_Block:
-		check_block(c, stmt);
+		check_block(c, stmt, flags);
 		break;
 
 	case AstStmt_Assign: {
@@ -467,7 +585,7 @@ void check_stmt(Checker *c, AstStmt *stmt, u32 flags) {
 		check_stmt(c, post, 0);
 		check_stmt(c, stmt->for_stmt.block, new_flags);
 
-		assert(pop_scope(c) == scope);
+		ASSERT(pop_scope(c) == scope);
 		break;
 	}
 	case AstStmt_While: {
@@ -498,7 +616,7 @@ void check_stmt(Checker *c, AstStmt *stmt, u32 flags) {
 
 void check_decl(Checker *c, AstDecl *decl) {
 	if (decl == NULL) return;
-	assert(c->context.scope != c->global_scope);
+	ASSERT(c->context.scope != c->global_scope);
 
 	switch (decl->kind) {
 	case AstDecl_Invalid: break;
@@ -522,7 +640,7 @@ Entity *check_ident(Checker *c, AstExpr *expr) {
 	String name;
 	Entity *e;
 
-	assert(expr->kind == AstExpr_Ident);
+	ASSERT(expr->kind == AstExpr_Ident);
 	name = expr->ident.token.string;
 	e = scope_lookup_entity(c->context.scope, name);
 	if (e == NULL) {
@@ -624,8 +742,86 @@ Operand check_unary_expr(Checker *c, Operand *o, Token op) {
 	return x;
 }
 
+void convert_untyped_error(Checker *c, Operand *x, Type *type) {
+	error(x->expr->pos, "cannot convert expression to typed");
+}
+
+bool check_representable_as_const(Checker *c, ConstValue value_in, Type *type, ConstValue *value_out) {
+	if (value_in.kind == ConstValue_Invalid) {
+		return false;
+	}
+	if (type == t_invalid) {
+		return false;
+	}
+	switch (type->kind) {
+	case Type_Bool:
+		return value_in.kind == ConstValue_Bool;
+	case Type_String:
+		return value_in.kind == ConstValue_String;
+	case Type_Int:
+	case Type_Rune: {
+		ConstValue v = const_value_to_integer(value_in);
+		if (v.kind != ConstValue_Integer) {
+			return false;
+		}
+		if (value_out) *value_out = v;
+
+
+		if (is_type_untyped(type)) {
+			return true;
+		} else {
+			i64 imin, imax;
+			i64 i = v.v_int;
+			u64 u = *(u64 *)&i;
+			i64 s = 8*type_size_of(type);
+			u64 umax = ~cast(u64)0ull;
+			if (s < 64) {
+				umax = (1ull << cast(u64)s) - 1ull;
+			} else {
+				// IMPORTANT TODO(bill): I NEED A PROPER BIG NUMBER LIBRARY OR SOMETHING BETTER THAN THIS
+				s = 64;
+			}
+			imin = -1ll << (s-1ll);
+			imax = (1ll << (s-1ll))-1ll;
+
+			if (is_type_unsigned(type)) {
+				if (s == 64) {
+					return 0ull <= i;
+				}
+				return !(u < 0ull || u > umax);
+			} else {
+				if (s == 64) {
+					return true;
+				}
+				return imin <= i && i <= imax;
+			}
+		}
+		break;
+	}
+	case Type_Float: {
+		ConstValue v = const_value_to_float(value_in);
+		if (v.kind != ConstValue_Float) {
+			return false;
+		}
+		if (value_out) *value_out = v;
+
+	}
+	}
+	return false;
+}
+
+void check_is_expressible(Checker *c, Operand *x, Type *type) {
+	ASSERT(is_type_constant_type(type));
+	ASSERT(x->mode == Addressing_Const);
+	if (!check_representable_as_const(c, x->value, type, &x->value)) {
+		error(x->expr->pos, "cannot convert expression");
+		x->mode = Addressing_Invalid;
+	}
+}
+
+
 bool convert_to_typed(Checker *c, Operand *x, Type *target_type) {
-	assert(target_type != NULL);
+	ASSERT(target_type != NULL);
 	if (x->mode == Addressing_Invalid ||
 	    x->mode == Addressing_Type ||
 	    !is_type_untyped(x->type) ||
@@ -638,10 +834,13 @@ bool convert_to_typed(Checker *c, Operand *x, Type *target_type) {
 			// IMPORTANT NOTE(bill): Order does matter
 			if (x->type->kind < target_type->kind) {
 				x->type = target_type;
+				update_expr_type(c, x->expr, target_type, false);
 			}
 			return true;
 		} else if (x->type->kind != target_type->kind) {
-			return true;
+			x->mode = Addressing_Invalid;
+			convert_untyped_error(c, x, target_type);
+			return false;
 		}
 		return true;
 	}
@@ -652,10 +851,36 @@ bool convert_to_typed(Checker *c, Operand *x, Type *target_type) {
 	case Type_Rune:
 	case Type_Float:
 	case Type_String:
+		if (x->mode == Addressing_Const) {
+			check_is_expressible(c, x, target_type);
+			if (x->mode == Addressing_Invalid) {
+				return false;
+			}
+			update_expr_value(c, x->expr, x->value);
+		} else if (is_type_untyped(x->type)) {
+			switch (x->type->kind) {
+			case Type_Bool:
+				if (!is_type_boolean(target_type)) {
+					x->mode = Addressing_Invalid;
+					convert_untyped_error(c, x, target_type);
+					return false;
+				}
+				break;
+			case Type_Int:
+			case Type_Rune:
+			case Type_Float:
+				if (!is_type_numeric(target_type)) {
+					x->mode = Addressing_Invalid;
+					convert_untyped_error(c, x, target_type);
+					return false;
+				}
+				break;
+			}
+		}
 		break;
 	default:
 		x->mode = Addressing_Invalid;
-		error(x->expr->pos, "cannot convert expression to typed");
+		convert_untyped_error(c, x, target_type);
 		return false;
 	}
 
@@ -737,11 +962,69 @@ Operand check_binary_expr(Checker *c, Operand x, Operand y, Token op) {
 	return x;
 }
 
+bool check_is_castable_to(Checker *c, Operand *x, Type *type) {
+	return false;
+}
+
+bool check_cast_internal(Checker *c, Operand *x, Type *type) {
+	bool is_const_expr = x->mode == Addressing_Const;
+	bool can_convert = false;
+	if (is_const_expr && is_type_constant_type(type)) {
+		if (Type_Bool <= type->kind && type->kind <= Type_String) { // IMPORTANT NOTE(bill); Order does matter
+			if (check_representable_as_const(c, x->value, type, &x->value)) {
+				return true;
+			} else if (type->kind == Type_Ptr && check_is_castable_to(c, x, type)) {
+				return true;
+			}
+		}
+	} else if (check_is_castable_to(c, x, type)) {
+		if (x->mode != Addressing_Const) {
+			x->mode = Addressing_Value;
+		} else if (type->kind == Type_Slice && x->type->kind == Type_String) {
+			x->mode = Addressing_Value;
+		}
+		return true;
+	}
+	return false;
+}
+
+void check_cast(Checker *c, Operand *o, Type *type) {
+	if (!is_operand_value(o)) {
+		error(o->expr->pos, "only values can be casted");
+		o->mode = Addressing_Invalid;
+		return;
+	} else {
+		bool is_const_expr = o->mode == Addressing_Const;
+		bool can_convert = check_cast_internal(c, o, type);
+
+		if (can_convert) {
+			error(o->expr->pos, "cannot cast expression");
+			o->mode = Addressing_Invalid;
+			return;
+		}
+
+		if (is_type_untyped(o->type)) {
+			Type *final_type = type;
+			if (is_const_expr && !is_type_constant_type(type)) {
+				final_type = default_type(o->type);
+			}
+			update_expr_type(c, o->expr, final_type, true);
+		}
+
+		o->type = type;
+	}
+}
+
+
+bool check_assignment(Checker *c, Operand *x, Type *type) {
+	return false;
+}
+
 Operand check_expr_base_internal(Checker *c, AstExpr *expr, Type *type_hint) {
 	Operand o = {0};
 	o.expr = expr;
 
-	assert(expr != NULL);
+	ASSERT(expr != NULL);
 	switch (expr->kind) {
 	case AstExpr_Literal:
 		o.mode = Addressing_Const;
@@ -755,6 +1038,7 @@ Operand check_expr_base_internal(Checker *c, AstExpr *expr, Type *type_hint) {
 			o.mode = Addressing_Invalid;
 			return o;
 		}
+		o.type = e->type;
 		switch (e->kind) {
 		case Entity_Var:   o.mode = Addressing_Var;     break;
 		case Entity_Const: o.mode = Addressing_Const;   break;
@@ -778,16 +1062,57 @@ Operand check_expr_base_internal(Checker *c, AstExpr *expr, Type *type_hint) {
 	case AstExpr_Paren:
 		return check_expr(c, expr->paren.expr);
 	case AstExpr_Call: {
-		Operand p = check_expr(c, expr->call.expr);
+		isize cargs = expr->call.arg_count;
+		Operand p = check_expr_or_type(c, expr->call.expr, NULL);
+		if (p.mode == Addressing_Type) {
+			switch (cargs) {
+			case 0:  error(p.expr->pos, "missing argument in type convertion");   break;
+			default: error(p.expr->pos, "too many arguments in type convertion"); break;
+			case 1: {
+				AstExpr *arg = expr->call.args[0];
+				Operand x = check_expr(c, arg);
+				if (x.mode != Addressing_Invalid) {
+					check_cast(c, &x, p.type);
+				}
+				return x;
+			}
+			}
+			ASSERT(cargs != 1);
+			o.mode = Addressing_Invalid;
+			return o;
+		}
 		if (p.type == NULL || p.type == t_invalid || p.type->kind != Type_Proc) {
 			error(p.expr->pos, "call expected procedure");
 			return o;
 		} else {
 			isize pargs = p.type->proc.field_count;
-			isize cargs = expr->call.arg_count;
 			isize arg_count = MIN(pargs, cargs);
+			isize i;
+			if (cargs < pargs) {
+				error(p.expr->pos, "too few arguments in call");
+			} else if (cargs > pargs) {
+				error(p.expr->pos, "too many arguments in call");
+			}
+			for (i = 0; i < arg_count; i++) {
+				AstExpr *arg = expr->call.args[i];
+				Entity *field = p.type->proc.fields[i];
+				Operand x = check_expr(c, arg);
+				if (!check_assignment(c, &x, field->type)) {
+					String name = field->name;
+					if (name.len == 0 || is_blank_name(name)) {
+						error(arg->pos, "cannot assign to procedure argument");
+					} else {
+						error(arg->pos, "cannot assign to procedure argument '%.*s'", LIT(field->name));
+					}
+				}
+			}
+			if (p.type->proc.ret != NULL) {
+				o.mode = Addressing_Value;
+				o.type = p.type->proc.ret;
+			} else {
+				o.mode = Addressing_NoValue;
+			}
 		}
-		o.mode = Addressing_NoValue;
 		break;
 	}
 	case AstExpr_Index:
@@ -837,10 +1162,6 @@ Operand check_expr_base_internal(Checker *c, AstExpr *expr, Type *type_hint) {
 	return o;
 }
 
-void add_type_and_value(Checker *c, AstExpr *expr, AddressingMode mode, Type *type, ConstValue value) {
-
-}
-
 Operand check_expr_base(Checker *c, AstExpr *expr, Type *type_hint) {
 	Operand o = check_expr_base_internal(c, expr, type_hint);
 	Type *type = NULL;
@@ -861,11 +1182,7 @@ Operand check_expr_base(Checker *c, AstExpr *expr, Type *type_hint) {
 		break;
 	}
 
-	if (type != NULL && is_type_untyped(type)) {
-		// TODO(bill): add_untyped
-	} else {
-		add_type_and_value(c, expr, o.mode, type, value);
-	}
+	add_expr_info(c, expr, o.mode, type, value);
 	return o;
 }
 
@@ -905,7 +1222,7 @@ Operand check_expr(Checker *c, AstExpr *expr) {
 }
 
 Type *check_type(Checker *c, AstType *type_expr) {
-	assert(type_expr != NULL);
+	ASSERT(type_expr != NULL);
 	switch (type_expr->kind) {
 	case AstType_Ident: {
 		Entity *e = check_ident(c, type_expr->ident);
@@ -995,7 +1312,7 @@ Type *check_type(Checker *c, AstType *type_expr) {
 			ret = check_type(c, type_expr->signature.return_type);
 		}
 
-		assert(pop_scope(c) == scope);
+		ASSERT(pop_scope(c) == scope);
 
 		proc_type = alloc_type_proc(scope, fields, buf_len(fields), ret);
 		buf_free(fields);
@@ -1099,15 +1416,13 @@ bool check_is_terminating(AstStmt *stmt) {
 
 
 void check_proc_body(Checker *c, DeclInfo *decl, Type *type, AstStmt *body) {
-	if (body == NULL) {
-		return;
-	} else {
+	if (body != NULL) {
 		Scope *scope = NULL;
 		String proc_name = str_lit("(anonymous-procedure)");
 		if (decl->entity) {
 			proc_name = decl->entity->name;
 		}
-		assert(type->kind == Type_Proc);
+		ASSERT(type->kind == Type_Proc);
 
 		c->context.decl = decl;
 		c->context.scope = type->proc.scope;
@@ -1129,7 +1444,7 @@ void check_proc_body(Checker *c, DeclInfo *decl, Type *type, AstStmt *body) {
 			}
 		}
 
-		assert(pop_scope(c) == scope);
+		ASSERT(pop_scope(c) == scope);
 	}
 }
 

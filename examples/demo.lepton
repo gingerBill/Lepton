@@ -8,7 +8,11 @@ proc f() : int {
 	var x: SmallInt = 123
 	x = 321
 	y += +23 * 2 / -3
+	add(123, 543);
 
 	return 1
 }
 
+proc add(x: int, y: int) : int {
+	return x + y;
+}

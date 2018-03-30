@@ -7,7 +7,6 @@
 #include <stdlib.h>
 #include <stdarg.h>
 #include <string.h>
-#include <assert.h>
 #include <math.h>
 
 #ifndef STATIC_ASSERT
@@ -18,7 +17,51 @@
 	#define STATIC_ASSERT(cond)        STATIC_ASSERT1(cond, __LINE__)
 #endif
 
-#define panic(msg) assert(0 && (msg))
+#ifndef DEBUG_TRAP
+	#if defined(_MSC_VER)
+	 	#if _MSC_VER < 1300
+		#define DEBUG_TRAP() __asm int 3 /* Trap to debugger! */
+		#else
+		#define DEBUG_TRAP() __debugbreak()
+		#endif
+	#else
+		#define DEBUG_TRAP() __builtin_trap()
+	#endif
+#endif
+
+#ifndef ASSERT_MSG
+#define ASSERT_MSG(cond, msg, ...) do { \
+	if (!(cond)) { \
+		assert_handler(#cond, __FILE__, cast(i64)__LINE__, msg, ##__VA_ARGS__); \
+		DEBUG_TRAP(); \
+	} \
+} while (0)
+#endif
+
+#ifndef ASSERT
+#define ASSERT(cond) ASSERT_MSG(cond, NULL)
+#endif
+
+#ifndef PANIC
+#define PANIC(msg, ...) ASSERT_MSG(0, msg, ##__VA_ARGS__);
+#endif
+
+
+void assert_handler(char const *condition, char const *file, int line, char const *msg, ...) {
+	FILE *f = stderr;
+	fprintf(f, "%s(%d): Assert Failure: ", file, line);
+	if (condition)
+		fprintf(f,  "`%s` ", condition);
+	if (msg) {
+		va_list va;
+		va_start(va, msg);
+		vfprintf(f, msg, va);
+		va_end(va);
+	}
+	fprintf(f, "\n");
+	fflush(stderr);
+}
+
 
 
 #if defined(_MSC_VER)
@@ -165,7 +208,7 @@ String make_string_c(char *text) {
 
 String substring(String s, isize lo, isize hi) {
 	isize max = s.len;
-	assert(lo <= hi && hi <= max);
+	ASSERT(lo <= hi && hi <= max);
 
 	return make_string(s.text+lo, hi-lo);
 }
@@ -264,7 +307,7 @@ void *mem_alloc(isize size) {
 }
 
 void *mem_realloc(void *ptr, isize size) {
-	assert(size >= 0);
+	ASSERT(size >= 0);
 	ptr = realloc(ptr, size);
 	if (!ptr) {
 		fatal("mem_realloc failed");
@@ -312,7 +355,7 @@ typedef struct BufferHeader {
 #define buf_reserve(b, n) ((n) <= buf_cap(b) ? 0 : ((b) = buf__grow((b), (n), sizeof(*(b)))))
 #define buf_resize(b, n) (buf_reserve(b, n), (buf__hdr(b)->len = (n)), (b))
 #define buf_push(b, ...) (buf_reserve((b), 1 + buf_len(b)), (b)[buf__hdr(b)->len++] = (__VA_ARGS__), (b))
-#define buf_pop(b) ((b) ? (assert(buf_len(b) > 0), buf__hdr(b)->len--) : 0)
+#define buf_pop(b) ((b) ? (buf_len(b) > 0, buf__hdr(b)->len--) : 0)
 #define buf_clear(b) ((b) ? buf__hdr(b)->len = 0 : 0)
 
 #define buf_printf(b) ((b) ? buf__hdr(b)->len = 0 : 0)
@@ -325,7 +368,7 @@ void *buf__grow(void const *b, isize new_len, isize elem_size) {
 	BufferHeader *new_header;
 
 	new_cap = MAX(MAX(2*buf_cap(b)+8, new_len), 16);
-	assert(new_len <= new_cap);
+	ASSERT(new_len <= new_cap);
 
 	new_size = sizeof(BufferHeader) + new_cap*elem_size;
 	if (b) {
@@ -350,7 +393,7 @@ char *buf__printf(char *buf, char const *fmt, ...) {
         va_start(args, fmt);
         cap = buf_cap(buf) - buf_len(buf);
         n = 1 + vsnprintf(buf_end(buf), cap, fmt, args);
-        assert(n <= cap);
+        ASSERT(n <= cap);
         va_end(args);
     }
     buf__hdr(buf)->len += n - 1;
@@ -391,7 +434,7 @@ void arena_grow(Arena *arena, isize min_size) {
 	isize size = MAX(ARENA_BLOCK_SIZE, min_size);
 	size = ALIGN_UP(size, ARENA_ALIGNMENT);
     arena->ptr = mem_alloc(size);
-    assert(arena->ptr == ALIGN_DOWN_PTR(arena->ptr, ARENA_ALIGNMENT));
+    ASSERT(arena->ptr == ALIGN_DOWN_PTR(arena->ptr, ARENA_ALIGNMENT));
     arena->end = arena->ptr + size;
     buf_push(arena->blocks, arena->ptr);
 }
@@ -401,12 +444,12 @@ void *arena_alloc(Arena *arena, isize size) {
 
     if (size > (arena->end - arena->ptr)) {
         arena_grow(arena, size);
-        assert(size <= (arena->end - arena->ptr));
+        ASSERT(size <= (arena->end - arena->ptr));
     }
     ptr = arena->ptr;
     arena->ptr = ALIGN_UP_PTR(arena->ptr + size, ARENA_ALIGNMENT);
-    assert(arena->ptr <= arena->end);
-    assert(ptr == ALIGN_DOWN_PTR(ptr, ARENA_ALIGNMENT));
+    ASSERT(arena->ptr <= arena->end);
+    ASSERT(ptr == ALIGN_DOWN_PTR(ptr, ARENA_ALIGNMENT));
     return ptr;
 }
 

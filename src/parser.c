@@ -31,7 +31,7 @@ typedef struct AstPackage {
 Token next_token(Parser *p) {
 	p->prev_token = p->curr_token;
 	p->curr_token = scan_token(&p->tokenizer);
-	return p->curr_token;
+	return p->prev_token;
 }
 
 Token expect_token(Parser *p, TokenKind kind) {
@@ -148,7 +148,22 @@ AstExpr *parse_operand(Parser *p, bool lhs) {
 }
 
 AstExpr *parse_call_expr(Parser *p, AstExpr *operand) {
-	return NULL;
+	AstExpr *call = NULL;
+	Token open, close;
+	AstExpr **args = NULL;
+	open = expect_token(p, Token_OpenParen);
+	while (p->curr_token.kind != Token_CloseParen &&
+	       p->curr_token.kind != Token_EOF) {
+		AstExpr *arg = parse_expr(p, false);
+		buf_push(args, arg);
+		if (!allow_token(p, Token_Comma)) {
+			break;
+		}
+	}
+	close = expect_token(p, Token_CloseParen);
+	call = ast_expr_call(operand, args, buf_len(args), token_end_pos(close));
+	buf_free(args);
+	return call;
 }
 
 AstExpr *parse_atom_expr(Parser *p, AstExpr *operand, bool lhs) {

@@ -17,6 +17,7 @@ enum TypeKind {
 	Type_Rune,
 	Type_Float,
 	Type_String,
+
 	Type_Ptr,
 	Type_Array,
 	Type_Slice,
@@ -91,6 +92,14 @@ Type *t_invalid = &t__invalid;
 Type *t_bool   = NULL;
 Type *t_int    = NULL;
 Type *t_uint   = NULL;
+Type *t_i8     = NULL;
+Type *t_i16    = NULL;
+Type *t_i32    = NULL;
+Type *t_i64    = NULL;
+Type *t_u8     = NULL;
+Type *t_u16    = NULL;
+Type *t_u32    = NULL;
+Type *t_u64    = NULL;
 Type *t_f32    = NULL;
 Type *t_f64    = NULL;
 Type *t_string = NULL;
@@ -115,12 +124,12 @@ bool are_types_equal(Type *x, Type *y);
 
 i64 type_size_of(Type *t) {
 	t = default_type(t);
-	assert(t->size >= 0);
+	ASSERT(t->size >= 0);
 	return t->size;
 }
 i64 type_align_of(Type *t) {
 	t = default_type(t);
-	assert(t->align >= 0);
+	ASSERT(t->align >= 0);
 	return t->align;
 }
 
@@ -165,7 +174,7 @@ bool is_type_constant_type(Type *t) {
 
 
 Type *default_type(Type *t) {
-	assert(t != NULL);
+	ASSERT(t != NULL);
 	if (is_type_untyped(t)) {
 		switch (t->kind) {
 		case Type_Bool:   return t_bool;
@@ -179,7 +188,7 @@ Type *default_type(Type *t) {
 }
 
 Type *type_deref(Type *t) {
-	assert(!is_type_untyped(t));
+	ASSERT(!is_type_untyped(t));
 	if (t->kind != Type_Ptr) {
 		return t;
 	}

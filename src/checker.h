@@ -3,13 +3,16 @@ typedef struct Type Type;
 typedef struct DeclInfo DeclInfo;
 typedef struct Scope Scope;
 typedef struct Operand Operand;
-typedef struct Checker Checker;
 typedef struct CheckerContext CheckerContext;
+typedef struct ProcInfo ProcInfo;
+typedef struct ExprInfo ExprInfo;
+typedef struct Checker Checker;
 
 typedef enum EntityKind  EntityKind;
 typedef enum EntityState EntityState;
 typedef enum EntityFlag  EntityFlag;
 typedef enum AddressingMode AddressingMode;
+typedef enum StmtFlag StmtFlag;
 
 
 
@@ -124,11 +127,17 @@ struct CheckerContext {
 	Type *    type_hint;
 };
 
-typedef struct ProcInfo {
+struct ProcInfo {
 	DeclInfo *decl;
 	Type *    type;
 	AstStmt * body;
-} ProcInfo;
+};
+
+struct ExprInfo {
+	AddressingMode mode;
+	Type *         type;
+	ConstValue     value;
+};
 
 struct Checker {
 	Scope *global_scope;
@@ -137,17 +146,18 @@ struct Checker {
 	Entity **entities;
 
 	ProcInfo *procs;
+	Map       expr_info_map; // Key: AstExpr *; Value: ExprInfo *
 
 	Entity **type_path;
 	isize    type_level;
 };
 
 
-typedef enum StmtFlag {
+enum StmtFlag {
 	StmtFlag_BreakAllowed       = 1<<0,
 	StmtFlag_ContinueAllowed    = 1<<1,
 	StmtFlag_FallthroughAllowed = 1<<2,
-} StmtFlag;
+};
 
 
 void checker_init(Checker *c);
@@ -173,7 +183,7 @@ Type *  check_type(Checker *c, AstType *type);
 void    check_stmt(Checker *c, AstStmt *stmt, u32 flags);
 Operand check_expr(Checker *c, AstExpr *expr);
 Operand check_expr_base(Checker *c, AstExpr *expr, Type *type_hint);
-
+Operand check_expr_or_type(Checker *c, AstExpr *expr, Type *type_hint);
 
 Entity *alloc_entity(EntityKind kind, AstExpr *ident, AstDecl *node);
 DeclInfo *alloc_decl_info(Checker *c, Entity *e, AstType *type_expr, AstExpr *init_expr);
@@ -182,6 +192,11 @@ Entity *scope_insert_entity(Scope *s, Entity *e);
 
 void add_entity(Checker *c, Entity *e);
 void add_entity_use(Checker *c, AstExpr *ident, Entity *e);
+
+void      add_expr_info   (Checker *c, AstExpr *expr, AddressingMode mode, Type *type, ConstValue value);
+ExprInfo *get_expr_info   (Checker *c, AstExpr *expr);
+void      update_expr_info(Checker *c, AstExpr *expr, ConstValue value);
+void      remove_expr_info(Checker *c, AstExpr *expr);
 
 
 #include "type.c"
