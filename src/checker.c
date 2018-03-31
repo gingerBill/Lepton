@@ -1263,6 +1263,7 @@ bool check_representable_as_const(Checker *c, ConstValue value_in, Type *type, C
 	if (type == t_invalid) {
 		return false;
 	}
+	type = base_type(type);
 	switch (type->kind) {
 	case Type_Bool:
 		return value_in.kind == ConstValue_Bool;
@@ -1345,14 +1346,15 @@ bool convert_to_typed(Checker *c, Operand *x, Type *target_type) {
 	}
 
 	if (is_type_untyped(target_type)) {
-		if (is_type_numeric(x->type) && is_type_numeric(target_type)) {
+		Type *t = base_type(x->type);
+		if (is_type_numeric(t) && is_type_numeric(target_type)) {
 			// IMPORTANT NOTE(bill): Order does matter
-			if (x->type->kind < target_type->kind) {
+			if (t->kind < target_type->kind) {
 				x->type = target_type;
 				update_expr_type(c, x->expr, target_type, false);
 			}
 			return true;
-		} else if (x->type->kind != target_type->kind) {
+		} else if (t->kind != target_type->kind) {
 			x->mode = Addressing_Invalid;
 			convert_untyped_error(c, x, target_type);
 			return false;
