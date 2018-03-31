@@ -137,6 +137,10 @@ bool is_type_untyped(Type *t) {
 	if (t == NULL) return false;
 	return t->flags & TypeFlag_Untyped;
 }
+bool is_type_typed(Type *t) {
+	if (t == NULL) return false;
+	return (t->flags & TypeFlag_Untyped) == 0;
+}
 bool is_type_unsigned(Type *t) {
 	if (t == NULL) return false;
 	return t->flags & TypeFlag_Unsigned;
@@ -380,3 +384,62 @@ bool are_types_equal(Type *x, Type *y) {
 	}
 	return false;
 }
+
+char *type_to_string_internal(char *str, Type *t) {
+	if (t == NULL) {
+		return buf_printf(str, "<no type>");
+	} else if (t->entity != NULL) {
+		return buf_printf(str, "%.*s", LIT(t->entity->name));
+	}
+	switch (t->kind) {
+	case Type_Ptr:
+		if (t->ptr.elem) {
+			buf_printf(str, "^");
+			return type_to_string_internal(str, t->ptr.elem);
+		} else {
+			return buf_printf(str, "rawptr");
+		}
+	case Type_Array:
+		buf_printf(str, "[%ld]", t->array.len);
+		return type_to_string_internal(str, t->array.elem);
+	case Type_Slice:
+		buf_printf(str, "[]");
+		return type_to_string_internal(str, t->slice.elem);
+	case Type_Set:
+		return buf_printf(str, "set[]");
+	case Type_Range:
+		return buf_printf(str, "range %ld..%d", t->range.lower, t->range.upper);
+	case Type_Struct:
+		return buf_printf(str, "struct{}");
+	case Type_Enum:
+		return buf_printf(str, "enum{}");
+	case Type_Proc: {
+		isize i;
+		buf_printf(str, "proc(");
+		for (i = 0; i < t->proc.field_count; i++) {
+			Entity *f = t->proc.fields[i];
+			if (i > 0) buf_printf(str, ", ");
+			buf_printf(str, "%.*s: ", LIT(f->name));
+			type_to_string_internal(str, f->type);
+		}
+		buf_printf(str, ")");
+		if (t->proc.ret) {
+			buf_printf(str, ": ");
+			type_to_string_internal(str, t->proc.ret);
+		}
+		return str;
+	}
+	}
+	return buf_printf(str, "<invalid type>");
+}
+
+char *type_to_string(Type *t) {
+	char *buf, *str;
+	buf = type_to_string_internal(NULL, t);
+	buf_push(buf, 0);
+	str = MEM_DUP_ARRAY(buf, buf_len(buf));
+	buf_free(buf);
+	return str;
+}
+
+

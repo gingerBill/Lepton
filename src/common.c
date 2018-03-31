@@ -47,11 +47,12 @@
 #endif
 
 
-void assert_handler(char const *condition, char const *file, int line, char const *msg, ...) {
+static void assert_handler(char const *condition, char const *file, int line, char const *msg, ...) {
 	FILE *f = stderr;
 	fprintf(f, "%s(%d): Assert Failure: ", file, line);
-	if (condition)
+	if (condition) {
 		fprintf(f,  "`%s` ", condition);
+	}
 	if (msg) {
 		va_list va;
 		va_start(va, msg);
@@ -358,7 +359,7 @@ typedef struct BufferHeader {
 #define buf_pop(b) ((b) ? (buf_len(b) > 0, buf__hdr(b)->len--) : 0)
 #define buf_clear(b) ((b) ? buf__hdr(b)->len = 0 : 0)
 
-#define buf_printf(b) ((b) ? buf__hdr(b)->len = 0 : 0)
+#define buf_printf(b, ...) ((b) = buf__printf((b), __VA_ARGS__))
 
 #define for_buf(idx_, b) for(idx_ = 0; idx_ < buf_len(b); idx_++)
 

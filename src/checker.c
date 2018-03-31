@@ -27,6 +27,7 @@ Type *alloc_universal_type(char *name, TypeKind kind, i64 size, i64 align, u32 t
 	e = alloc_entity(Entity_Type, ident, NULL);
 	e->type = t;
 	e->state = EntityState_Resolved;
+	t->entity = e;
 	prev = scope_insert_entity(universal_scope, e);
 	ASSERT(prev == NULL);
 	return t;
@@ -239,6 +240,12 @@ Entity *alloc_entity(EntityKind kind, AstExpr *ident, AstDecl *node) {
 	return e;
 }
 
+Entity *alloc_entity_dummy_variable(Scope *s, AstExpr *ident) {
+	Entity *e = alloc_entity(Entity_Var, ident, NULL);
+	e->name = make_string_c("_");
+	return e;
+}
+
 DeclInfo *alloc_decl_info(Checker *c, Entity *e, AstType *type_expr, AstExpr *init_expr) {
 	DeclInfo *d = MEM_NEW(DeclInfo);
 	d->parent    = c->context.decl;
@@ -283,6 +290,10 @@ Entity *scope_lookup_entity(Scope *scope, String name) {
 		}
 	}
 	return NULL;
+}
+Entity *current_scope_lookup_entity(Scope *s, String name) {
+	HashKey key = hash_str(name);
+	return map_get(&s->elements, key);
 }
 
 Entity *scope_insert_entity(Scope *s, Entity *e) {
@@ -428,7 +439,7 @@ void check_entity_decl(Checker *c, Entity *e) {
 		return;
 	}
 	if (e->type != NULL || e->state != EntityState_Unresolved) {
-		error(e->ident->pos, "Illegal declaration cycle of `%.*s`", LIT(e->name));
+		error(e->ident->pos, "illegal declaration cycle of `%.*s`", LIT(e->name));
 		return;
 	}
 	ASSERT(e->state == EntityState_Unresolved);
@@ -522,7 +533,157 @@ void check_block(Checker *c, AstStmt *stmt, u32 flags) {
 }
 
 
+bool check_arity_match(Checker *c, AstExpr **lhs, isize lhs_count, AstType *type_expr, AstExpr **rhs, isize rhs_count) {
+	ASSERT(lhs_count != 0);
+
+	if (rhs_count == 0) {
+		if (type_expr == NULL) {
+			error(lhs[0]->pos, "missing type or initial expression");
+			return false;
+		}
+	} else if (lhs_count < rhs_count) {
+		AstExpr *n = rhs[lhs_count];
+		char *str = expr_to_string(n);
+		error(n->pos, "extra initial expression '%s'", str);
+		mem_free(str);
+		return false;
+	} else if (lhs_count > rhs_count) {
+		AstExpr *n = lhs[rhs_count];
+		char *str = expr_to_string(n);
+		error(n->pos, "missing expression for '%s'", str);
+		mem_free(str);
+		return false;
+	}
+
+	return true;
+}
+
+Type *check_init_variable(Checker *c, Entity *e, Operand *o, char const *context_name) {
+	if (o->mode == Addressing_Invalid ||
+	    o->type == t_invalid ||
+	    e->type == t_invalid) {
+		if (e->type == NULL) {
+			e->type = t_invalid;
+		}
+		return NULL;
+	}
+	if (e->type == NULL) {
+		Type *t = o->type;
+		if (is_type_untyped(t)) {
+			t = default_type(t);
+		}
+		ASSERT(is_type_typed(t));
+		e->type = t;
+	}
+
+	check_assignment(c, o, e->type, context_name);
+	if (o->mode == Addressing_Invalid) {
+		return NULL;
+	}
+	return e->type;
+}
+
+
+
+void check_init_variables(Checker *c, Entity **lhs, isize lhs_count, AstExpr **rhs, isize rhs_count, char const *context_name) {
+	if ((lhs == NULL || lhs_count == 0) && rhs_count == 0) {
+		return;
+	} else {
+		isize i;
+		isize count = MIN(lhs_count, rhs_count);
+		for (i = 0; i < count; i++) {
+			Entity *e = lhs[i];
+			DeclInfo *d = e->decl;
+			Operand o = check_expr(c, rhs[i]);
+			check_init_variable(c, e, &o, context_name);
+			if (d != NULL) {
+				d->init_expr = o.expr;
+			}
+		}
+
+		if (rhs_count > 0 && lhs_count != rhs_count) {
+			error(lhs[0]->ident->pos, "assignment count mismatch '%ld' = '%ld'", lhs_count, rhs_count);
+		}
+	}
+}
+
+
 void check_var_decl(Checker *c, AstExpr **lhs, isize lhs_count, AstType *type_expr, AstExpr **rhs, isize rhs_count) {
+	isize i;
+	Type *init_type = NULL;
+	Entity **entities = NULL; // dynamic buffer
+	isize new_name_count = 0;
+
+	if (lhs_count == 0) {
+		return;
+	}
+	buf_reserve(entities, lhs_count);
+
+	for (i = 0; i < lhs_count; i++) {
+		AstExpr *name = lhs[i];
+		Entity *entity = NULL;
+
+		if (name->kind != AstExpr_Ident) {
+			error(name->pos, "var declarations must use identifiers for a name");
+		} else {
+			Token token = name->ident.token;
+			String str = token.string;
+			Entity *found = NULL;
+			if (!is_blank_name(str)) {
+				found = current_scope_lookup_entity(c->context.scope, str);
+				new_name_count += 1;
+			}
+			if (found == NULL) {
+				entity = alloc_entity(Entity_Var, name, NULL);
+			} else {
+				TokenPos pos = found->ident->pos;
+				error(pos,
+				      "redeclaration of '%.*s' in this scope\n"
+				      "\tat %.*s(%ld:%ld)",
+				      LIT(str), LIT(pos.file), pos.line, pos.column);
+				entity = found;
+			}
+		}
+		if (entity == NULL) {
+			entity = alloc_entity_dummy_variable(c->global_scope, name);
+		}
+		buf_push(entities, entity);
+	}
+
+	if (new_name_count == 0) {
+		error(lhs[0]->pos, "no new declarations on the lhs");
+	}
+
+	init_type = NULL;
+	if (type_expr != NULL) {
+		init_type = check_type(c, type_expr);
+		if (init_type == NULL) {
+			init_type = t_invalid;
+		}
+	}
+
+	for (i = 0; i < buf_len(entities); i++) {
+		Entity *e = entities[i];
+		ASSERT(e != NULL);
+		if (e->flags & EntityFlag_Visited) {
+			e->type = t_invalid;
+			continue;
+		}
+		e->flags |= EntityFlag_Visited;
+		e->state = EntityState_Processing;
+		if (e->type == NULL) {
+			e->type = init_type;
+			e->state = EntityState_Resolved;
+		}
+	}
+
+	check_arity_match(c, lhs, lhs_count, type_expr, rhs, rhs_count);
+	check_init_variables(c, entities, buf_len(entities), rhs, rhs_count, "variable declaration");
+
+	for (i = 0; i < buf_len(entities); i++) {
+		Entity *e = entities[i];
+		add_entity(c, e);
+	}
 
 }
 
@@ -561,7 +722,7 @@ void check_stmt(Checker *c, AstStmt *stmt, u32 flags) {
 	case AstStmt_If: {
 		Operand cond = check_expr(c, stmt->if_stmt.cond);
 		if (!is_operand_value(&cond)) {
-			error(cond.expr->pos, "Expected a value for an if condition, got %.*s", LIT(addressing_mode_strings[cond.mode]));
+			error(cond.expr->pos, "expected a value in if condition, got %.*s", LIT(addressing_mode_strings[cond.mode]));
 		}
 		check_stmt(c, stmt->if_stmt.then_block, flags);
 		check_stmt(c, stmt->if_stmt.else_stmt, flags);
@@ -579,7 +740,7 @@ void check_stmt(Checker *c, AstStmt *stmt, u32 flags) {
 		if (cond) {
 			Operand x = check_expr(c, cond);
 			if (!is_operand_value(&x)) {
-				error(x.expr->pos, "Expected a value for an if condition, got %.*s", LIT(addressing_mode_strings[x.mode]));
+				error(x.expr->pos, "expected a value in for condition, got %.*s", LIT(addressing_mode_strings[x.mode]));
 			}
 		}
 		check_stmt(c, post, 0);
@@ -594,7 +755,7 @@ void check_stmt(Checker *c, AstStmt *stmt, u32 flags) {
 		if (cond) {
 			Operand x = check_expr(c, cond);
 			if (!is_operand_value(&x)) {
-				error(x.expr->pos, "Expected a value for an if condition, got %.*s", LIT(addressing_mode_strings[x.mode]));
+				error(x.expr->pos, "expected a value in while condition, got %.*s", LIT(addressing_mode_strings[x.mode]));
 			}
 		}
 		check_stmt(c, stmt->while_stmt.block, new_flags);
@@ -621,12 +782,20 @@ void check_decl(Checker *c, AstDecl *decl) {
 	switch (decl->kind) {
 	case AstDecl_Invalid: break;
 
-	case AstDecl_Var:
-		break;
+	case AstDecl_Var: {
+		AstExpr **lhs = decl->var_decl.lhs;
+		AstExpr **rhs = decl->var_decl.rhs;
+		AstType *type_expr = decl->var_decl.type;
+		isize lhs_count = decl->var_decl.lhs_count;
+		isize rhs_count = decl->var_decl.rhs_count;
+		check_var_decl(c, lhs, lhs_count, type_expr, rhs, rhs_count);
+		return;
+	}
 	case AstDecl_Const:
-		break;
+		return;
+
 	case AstDecl_Type:
-		break;
+		return;
 	case AstDecl_Proc:
 		error(decl->pos, "proc declarations are only allowed a file scope");
 		break;
@@ -667,19 +836,25 @@ bool check_unary_op(Checker *c, Operand *o, Token op) {
 	case Token_Add:
 	case Token_Sub:
 		if (!is_type_numeric(o->type)) {
-			error(op.pos, "operator %.*s is not allowed with non-numeric expressions");
+			char *t = type_to_string(o->type);
+			error(op.pos, "operator %.*s is not allowed with non-numeric expressions, %s", LIT(op.string), t);
+			mem_free(t);
 			return false;
 		}
 		break;
 	case Token_Xor:
 		if (!is_type_integer(o->type)) {
-			error(op.pos, "operator %.*s is not allowed with non-integer expressions");
+			char *t = type_to_string(o->type);
+			error(op.pos, "operator %.*s is not allowed with non-integer expressions, %s", LIT(op.string), t);
+			mem_free(t);
 			return false;
 		}
 		break;
 	case Token_not:
 		if (!is_type_boolean(o->type)) {
-			error(op.pos, "operator %.*s is not allowed with non-boolean expressions");
+			char *t = type_to_string(o->type);
+			error(op.pos, "operator %.*s is not allowed with non-boolean expressions, %s", LIT(op.string), t);
+			mem_free(t);
 			return false;
 		}
 		break;
@@ -696,7 +871,9 @@ Operand check_unary_expr(Checker *c, Operand *o, Token op) {
 	switch (op.kind) {
 	case Token_At:
 		if (o->mode != Addressing_Var) {
-			error(op.pos, "cannot take the pointer address of a non variable");
+			char *es = expr_to_string(o->expr);
+			error(op.pos, "cannot take the pointer address of a non variable, %s", es);
+			mem_free(es);
 			x.mode = Addressing_Invalid;
 			return x;
 		}
@@ -713,7 +890,11 @@ Operand check_unary_expr(Checker *c, Operand *o, Token op) {
 	if (o->mode == Addressing_Const) {
 		Type *t = o->type;
 		if (!is_type_constant_type(t)) {
-			error(op.pos, "invalid type for constant unary expression");
+			char *ts = type_to_string(t);
+			char *es = expr_to_string(o->expr);
+			error(op.pos, "invalid type, %s, for constant unary expression, %s", ts, es);
+			mem_free(es);
+			mem_free(ts);
 			x.mode = Addressing_Invalid;
 			return x;
 		} else {
@@ -743,7 +924,11 @@ Operand check_unary_expr(Checker *c, Operand *o, Token op) {
 }
 
 void convert_untyped_error(Checker *c, Operand *x, Type *type) {
-	error(x->expr->pos, "cannot convert expression to typed");
+	char *es = expr_to_string(x->expr);
+	char *ts = type_to_string(type);
+	error(x->expr->pos, "cannot convert '%s' to '%s'", es, ts);
+	mem_free(ts);
+	mem_free(es);
 }
 
 bool check_representable_as_const(Checker *c, ConstValue value_in, Type *type, ConstValue *value_out) {
@@ -814,7 +999,12 @@ void check_is_expressible(Checker *c, Operand *x, Type *type) {
 	ASSERT(is_type_constant_type(type));
 	ASSERT(x->mode == Addressing_Const);
 	if (!check_representable_as_const(c, x->value, type, &x->value)) {
-		error(x->expr->pos, "cannot convert expression");
+		char *es = expr_to_string(x->expr);
+		char *ts = type_to_string(type);
+		error(x->expr->pos, "cannot convert '%s' to '%s'", es, ts);
+		mem_free(ts);
+		mem_free(es);
+
 		x->mode = Addressing_Invalid;
 	}
 }
@@ -824,7 +1014,7 @@ bool convert_to_typed(Checker *c, Operand *x, Type *target_type) {
 	ASSERT(target_type != NULL);
 	if (x->mode == Addressing_Invalid ||
 	    x->mode == Addressing_Type ||
-	    !is_type_untyped(x->type) ||
+	    is_type_typed(x->type) ||
 	    target_type == t_invalid) {
 		return false;
 	}
@@ -924,7 +1114,11 @@ Operand check_binary_expr(Checker *c, Operand x, Operand y, Token op) {
 	if (!are_types_equal(x.type, y.type)) {
 		if (x.type != t_invalid &&
 		    y.type != t_invalid) {
-			error(op.pos, "mismatched types in binary expression");
+			char *xt = type_to_string(x.type);
+			char *yt = type_to_string(y.type);
+			error(op.pos, "mismatched types in binary expression, %s vs %s", xt, yt);
+			mem_free(yt);
+			mem_free(xt);
 		}
 		x.mode = Addressing_Invalid;
 		return x;
@@ -998,7 +1192,11 @@ void check_cast(Checker *c, Operand *o, Type *type) {
 		bool can_convert = check_cast_internal(c, o, type);
 
 		if (can_convert) {
-			error(o->expr->pos, "cannot cast expression");
+			char *es = expr_to_string(o->expr);
+			char *ts = type_to_string(type);
+			error(o->expr->pos, "cannot cast %s to %s", es, ts);
+			mem_free(ts);
+			mem_free(es);
 			o->mode = Addressing_Invalid;
 			return;
 		}
@@ -1016,8 +1214,111 @@ void check_cast(Checker *c, Operand *o, Type *type) {
 }
 
 
-bool check_assignment(Checker *c, Operand *x, Type *type) {
+bool check_is_assignable_to(Checker *c, Operand *x, Type *type) {
+	Type *src = x->type;
+	Type *dst = type;
+	if (x->mode == Addressing_Invalid || type == t_invalid) {
+		return false;
+	}
+	if (x->mode == Addressing_Type) {
+		return false;
+	}
+
+	if (are_types_equal(src, dst)) {
+		return true;
+	}
+
+	if (is_type_untyped(src)) {
+		if (is_type_constant_type(dst)) {
+			if (x->mode == Addressing_Const) {
+				if (check_representable_as_const(c, x->value, dst, NULL)) {
+					if (is_type_typed(dst) && is_type_constant_type(src)) {
+						switch (src->kind) {
+						case Type_Rune:
+						case Type_Int:
+							return (dst->kind == Type_Int || dst->kind == Type_Rune);
+						case Type_Float:
+							return (dst->kind == Type_Float);
+						}
+					}
+					return true;
+				}
+				return false;
+			}
+			if (is_type_untyped(src) && src->kind == Type_Rune) {
+				return (dst->kind == Type_Int || dst->kind == Type_Rune);
+			}
+			if (is_type_untyped(src) && src->kind == Type_Bool) {
+				return dst->kind == Type_Bool;
+			}
+		}
+	}
+
+	if (are_types_equal(type, t_rawptr) && src->kind == Type_Ptr) {
+		return true;
+	}
+
+	if (dst->kind == Type_Proc) {
+		if (are_types_equal(src, dst)) {
+			return true;
+		}
+	}
+
 	return false;
+}
+
+bool check_assignment(Checker *c, Operand *x, Type *type, char const *context_name) {
+	if (x->mode == Addressing_Invalid) {
+		return false;
+	}
+
+	if (is_type_untyped(x->type)) {
+		Type *target_type = type;
+		if (type == NULL) {
+			// if (x->type == t_untyped_nil) {
+			// 	error(x->expr->pos, "use of untyped nil in %s", context_name);
+			// 	x->mode = Addressing_Invalid;
+			// 	return false;
+			// }
+			target_type = default_type(x->type);
+		}
+
+		if (!convert_to_typed(c, x, target_type)) {
+			return false;
+		}
+	}
+
+	if (type == NULL) {
+		return false;
+	}
+
+
+	if (!check_is_assignable_to(c, x, type)) {
+		char *expr_str    = expr_to_string(x->expr);
+		char *op_type_str = type_to_string(x->type);
+		char *type_str    = type_to_string(type);
+
+
+		switch (x->mode) {
+		case Addressing_Type:
+			error(x->expr->pos, "cannot assign %s which is a type in %s",
+			      op_type_str, context_name);
+			break;
+		default:
+			error(x->expr->pos, "cannot assign value '%s' of type '%s' to '%s' in %s",
+			      expr_str, op_type_str, type_str, context_name);
+			break;
+		}
+
+		mem_free(type_str);
+		mem_free(op_type_str);
+		mem_free(expr_str);
+
+		x->mode = Addressing_Invalid;
+		return false;
+	}
+
+	return true;
 }
 
 Operand check_expr_base_internal(Checker *c, AstExpr *expr, Type *type_hint) {
@@ -1097,13 +1398,15 @@ Operand check_expr_base_internal(Checker *c, AstExpr *expr, Type *type_hint) {
 				AstExpr *arg = expr->call.args[i];
 				Entity *field = p.type->proc.fields[i];
 				Operand x = check_expr(c, arg);
-				if (!check_assignment(c, &x, field->type)) {
+				if (!check_assignment(c, &x, field->type, "call")) {
 					String name = field->name;
+					char *st = type_to_string(field->type);
 					if (name.len == 0 || is_blank_name(name)) {
-						error(arg->pos, "cannot assign to procedure argument");
+						error(arg->pos, "cannot assign to procedure argument of type %s", st);
 					} else {
-						error(arg->pos, "cannot assign to procedure argument '%.*s'", LIT(field->name));
+						error(arg->pos, "cannot assign to procedure argument '%.*s' of type %s", LIT(field->name), st);
 					}
+					mem_free(st);
 				}
 			}
 			if (p.type->proc.ret != NULL) {
@@ -1226,6 +1529,9 @@ Type *check_type(Checker *c, AstType *type_expr) {
 	switch (type_expr->kind) {
 	case AstType_Ident: {
 		Entity *e = check_ident(c, type_expr->ident);
+		if (e == NULL) {
+			return NULL;
+		}
 		if (e->kind == Entity_Type) {
 			return e->type;
 		}
@@ -1449,6 +1755,76 @@ void check_proc_body(Checker *c, DeclInfo *decl, Type *type, AstStmt *body) {
 }
 
 
+char *expr_to_string_internal(char *str, AstExpr *expr) {
+	isize i;
+	if (expr == NULL) {
+		return buf_printf(str, "<invalid expr>");
+	}
+	switch (expr->kind) {
+	case AstExpr_Literal:
+		return buf_printf(str, "%.*s", LIT(expr->literal.string));
+	case AstExpr_Ident:
+		return buf_printf(str, "%.*s", LIT(expr->ident.token.string));
+	case AstExpr_TypeExpr:
+		return str;
+	case AstExpr_Paren:
+		buf_printf(str, "(");
+		expr_to_string_internal(str, expr->paren.expr);
+		buf_printf(str, ")");
+		return str;
+	case AstExpr_Call:
+		expr_to_string_internal(str, expr->call.expr);
+		buf_printf(str, "(");
+		for (i = 0; i < expr->call.arg_count; i++) {
+			AstExpr *arg = expr->call.args[i];
+			if (i > 0) buf_printf(str, ", ");
+			expr_to_string_internal(str, arg);
+		}
+		buf_printf(str, ")");
+		return str;
+	case AstExpr_Index:
+		expr_to_string_internal(str, expr->index.expr);
+		buf_printf(str, "[");
+		expr_to_string_internal(str, expr->index.index);
+		buf_printf(str, "]");
+		return str;
+	case AstExpr_Selector:
+		expr_to_string_internal(str, expr->selector.expr);
+		buf_printf(str, ".");
+		expr_to_string_internal(str, expr->selector.ident);
+		return str;
+	case AstExpr_Deref:
+		expr_to_string_internal(str, expr->deref.expr);
+		buf_printf(str, "^");
+		return str;
+	case AstExpr_Unary:
+		buf_printf(str, "%.*s", LIT(expr->unary.op.string));
+		expr_to_string_internal(str, expr->unary.expr);
+		return str;
+	case AstExpr_Binary:
+		expr_to_string_internal(str, expr->binary.left);
+		buf_printf(str, " %.*s ", LIT(expr->binary.op.string));
+		expr_to_string_internal(str, expr->binary.right);
+		return str;
+	case AstExpr_Ternary:
+		expr_to_string_internal(str, expr->ternary.cond);
+		buf_printf(str, " ? ");
+		expr_to_string_internal(str, expr->ternary.left);
+		buf_printf(str, " : ");
+		expr_to_string_internal(str, expr->ternary.right);
+		return str;
+	}
+	return str;
+}
+
+char *expr_to_string(AstExpr *expr) {
+	char *buf, *str;
+	buf = expr_to_string_internal(NULL, expr);
+	buf_push(buf, 0);
+	str = MEM_DUP_ARRAY(buf, buf_len(buf));
+	buf_free(buf);
+	return str;
+}
 
 
 

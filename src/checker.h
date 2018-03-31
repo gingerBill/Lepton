@@ -61,8 +61,9 @@ enum EntityState {
 };
 
 enum EntityFlag {
-	EntityFlag_Used = 1<<0,
-	EntityFlag_Param = 1<<1,
+	EntityFlag_Used    = 1<<0,
+	EntityFlag_Param   = 1<<1,
+	EntityFlag_Visited = 1<<2,
 };
 
 struct Entity {
@@ -184,10 +185,12 @@ void    check_stmt(Checker *c, AstStmt *stmt, u32 flags);
 Operand check_expr(Checker *c, AstExpr *expr);
 Operand check_expr_base(Checker *c, AstExpr *expr, Type *type_hint);
 Operand check_expr_or_type(Checker *c, AstExpr *expr, Type *type_hint);
+bool check_assignment(Checker *c, Operand *x, Type *type, char const *context_name);
 
 Entity *alloc_entity(EntityKind kind, AstExpr *ident, AstDecl *node);
 DeclInfo *alloc_decl_info(Checker *c, Entity *e, AstType *type_expr, AstExpr *init_expr);
 Entity *scope_lookup_entity(Scope *scope, String name);
+Entity *current_scope_lookup_entity(Scope *scope, String name);
 Entity *scope_insert_entity(Scope *s, Entity *e);
 
 void add_entity(Checker *c, Entity *e);
@@ -197,6 +200,9 @@ void      add_expr_info   (Checker *c, AstExpr *expr, AddressingMode mode, Type 
 ExprInfo *get_expr_info   (Checker *c, AstExpr *expr);
 void      update_expr_info(Checker *c, AstExpr *expr, ConstValue value);
 void      remove_expr_info(Checker *c, AstExpr *expr);
+
+char *expr_to_string(AstExpr *expr);
+char *type_to_string(Type *type);
 
 
 #include "type.c"
