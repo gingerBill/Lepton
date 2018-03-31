@@ -1,9 +1,7 @@
 const a, b, c = 123, 345, 456
-// var x = 123
-// var y = x * 2
-type Vector [3]int
-type Bar [3]Foo
-type Foo [3]Bar
+var x = 123
+var y = x * 2
+type Vector [3]float32
 
 proc f(): int {
 	type SmallInt range -10..10

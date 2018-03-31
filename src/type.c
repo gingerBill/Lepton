@@ -17,6 +17,7 @@ enum TypeKind {
 	Type_Rune,
 	Type_Float,
 	Type_String,
+	Type_Nil,
 
 	Type_Named,
 	Type_Ptr,
@@ -32,8 +33,8 @@ enum TypeKind {
 };
 
 enum TypeFlag {
-	TypeFlag_Unsigned = 1<<0,
-	TypeFlag_Untyped  = 1<<1,
+	TypeFlag_Untyped  = 1<<0,
+	TypeFlag_Unsigned = 1<<1,
 };
 
 struct TypeRange {
@@ -94,22 +95,23 @@ Type *t_untyped_nil    = NULL;
 
 Type t__invalid = {0};
 Type *t_invalid = &t__invalid;
-Type *t_bool   = NULL;
-Type *t_int    = NULL;
-Type *t_uint   = NULL;
-Type *t_i8     = NULL;
-Type *t_i16    = NULL;
-Type *t_i32    = NULL;
-Type *t_i64    = NULL;
-Type *t_u8     = NULL;
-Type *t_u16    = NULL;
-Type *t_u32    = NULL;
-Type *t_u64    = NULL;
-Type *t_f32    = NULL;
-Type *t_f64    = NULL;
-Type *t_string = NULL;
-Type *t_rune   = NULL;
-Type *t_rawptr = NULL;
+Type *t_bool    = NULL;
+Type *t_int     = NULL;
+Type *t_uint    = NULL;
+Type *t_uintptr = NULL;
+Type *t_int8    = NULL;
+Type *t_int16   = NULL;
+Type *t_int32   = NULL;
+Type *t_int64   = NULL;
+Type *t_uint8   = NULL;
+Type *t_uint16  = NULL;
+Type *t_uint32  = NULL;
+Type *t_uint64  = NULL;
+Type *t_float32 = NULL;
+Type *t_float64 = NULL;
+Type *t_string  = NULL;
+Type *t_rune    = NULL;
+Type *t_rawptr  = NULL;
 
 
 
@@ -200,6 +202,16 @@ bool is_type_constant_type(Type *t) {
 	}
 	return false;
 }
+bool type_has_nil(Type *t) {
+	if (t == NULL) return false;
+	switch (t->kind) {
+	case Type_Ptr:
+	case Type_Slice:
+		return true;
+	}
+	return false;
+}
+
 
 
 Type *default_type(Type *t) {
@@ -208,7 +220,7 @@ Type *default_type(Type *t) {
 		switch (t->kind) {
 		case Type_Bool:   return t_bool;
 		case Type_Int:    return t_int;
-		case Type_Float:  return t_f64;
+		case Type_Float:  return t_float64;
 		case Type_String: return t_string;
 		case Type_Rune:   return t_rune;
 		}

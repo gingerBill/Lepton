@@ -33,33 +33,81 @@ Type *alloc_universal_type(char *name, TypeKind kind, i64 size, i64 align, u32 t
 	return t;
 }
 
+void alloc_universal_constant(char *name, Type *type, ConstValue value) {
+	Entity *e = NULL;
+	Entity *prev = NULL;
+	AstExpr *ident = NULL;
+	Token token = {Token_Ident};
+
+	ASSERT(universal_scope != NULL);
+
+	token.string = make_string_c(name);
+	ident = ast_expr_ident(token);
+
+	e = alloc_entity(Entity_Const, ident, NULL);
+	e->type = type;
+	e->value = value;
+	e->state = EntityState_Resolved;
+	prev = scope_insert_entity(universal_scope, e);
+	ASSERT(prev == NULL);
+}
+
+Entity *alloc_universal_entity(char *name, EntityKind kind, Type *type) {
+	Entity *e = NULL;
+	Entity *prev = NULL;
+	AstExpr *ident = NULL;
+	Token token = {Token_Ident};
+
+	ASSERT(universal_scope != NULL);
+
+	token.string = make_string_c(name);
+	ident = ast_expr_ident(token);
+
+	e = alloc_entity(kind, ident, NULL);
+	e->type = type;
+	e->state = EntityState_Resolved;
+	prev = scope_insert_entity(universal_scope, e);
+	ASSERT(prev == NULL);
+	return e;
+}
+
+static bool global_universal_scope_init = false;
 void init_universal_scope(void) {
+	ASSERT(global_universal_scope_init == false);
+	global_universal_scope_init = true;
+
 	universal_scope = alloc_scope(NULL, NULL);
 	universal_scope->flags |= ScopeFlag_Global;
 
-	ASSERT(t_untyped_bool == NULL);
-	t_untyped_bool   = alloc_universal_type("untyped bool",   Type_Bool,   -1, -1, TypeFlag_Untyped);
-	t_untyped_int    = alloc_universal_type("untyped int",    Type_Int,    -1, -1, TypeFlag_Untyped);
-	t_untyped_float  = alloc_universal_type("untyped float",  Type_Float,  -1, -1, TypeFlag_Untyped);
-	t_untyped_string = alloc_universal_type("untyped string", Type_String, -1, -1, TypeFlag_Untyped);
-	t_untyped_rune   = alloc_universal_type("untyped rune",   Type_Rune,   -1, -1, TypeFlag_Untyped);
+	t_untyped_bool   = alloc_universal_type("untyped bool",   Type_Bool,   0, 0, TypeFlag_Untyped);
+	t_untyped_int    = alloc_universal_type("untyped int",    Type_Int,    0, 0, TypeFlag_Untyped);
+	t_untyped_float  = alloc_universal_type("untyped float",  Type_Float,  0, 0, TypeFlag_Untyped);
+	t_untyped_string = alloc_universal_type("untyped string", Type_String, 0, 0, TypeFlag_Untyped);
+	t_untyped_rune   = alloc_universal_type("untyped rune",   Type_Rune,   0, 0, TypeFlag_Untyped);
+	t_untyped_nil    = alloc_universal_type("untyped nil",    Type_Nil,    0, 0, TypeFlag_Untyped);
 
-	t_bool   = alloc_universal_type("bool",   Type_Bool,   1, 1, 0);
-	t_int    = alloc_universal_type("int",    Type_Int,    PTR_SIZE, PTR_ALIGN, 0);
-	t_uint   = alloc_universal_type("uint",   Type_Int,    PTR_SIZE, PTR_ALIGN, TypeFlag_Unsigned);
-	t_i8     = alloc_universal_type("i8",     Type_Int,    1, 1, 0);
-	t_i16    = alloc_universal_type("i16",    Type_Int,    2, 2, 0);
-	t_i32    = alloc_universal_type("i32",    Type_Int,    4, 4, 0);
-	t_i64    = alloc_universal_type("i64",    Type_Int,    8, 8, 0);
-	t_u8     = alloc_universal_type("u8",     Type_Int,    1, 1, TypeFlag_Unsigned);
-	t_u16    = alloc_universal_type("u16",    Type_Int,    2, 2, TypeFlag_Unsigned);
-	t_u32    = alloc_universal_type("u32",    Type_Int,    4, 4, TypeFlag_Unsigned);
-	t_u64    = alloc_universal_type("u64",    Type_Int,    8, 8, TypeFlag_Unsigned);
-	t_f32    = alloc_universal_type("f32",    Type_Float,  4, 4, 0);
-	t_f64    = alloc_universal_type("f64",    Type_Float,  8, 8, 0);
-	t_string = alloc_universal_type("string", Type_String, 2*PTR_SIZE, PTR_ALIGN, 0);
-	t_rune   = alloc_universal_type("rune",   Type_Rune,   4, 4, 0);
-	t_rawptr = alloc_universal_type("rawptr", Type_Ptr,    PTR_SIZE, PTR_SIZE, 0);
+	t_bool    = alloc_universal_type("bool",    Type_Bool,   1, 1, 0);
+	t_int     = alloc_universal_type("int",     Type_Int,    PTR_SIZE, PTR_ALIGN, 0);
+	t_uint    = alloc_universal_type("uint",    Type_Int,    PTR_SIZE, PTR_ALIGN, TypeFlag_Unsigned);
+	t_uintptr = alloc_universal_type("uintptr", Type_Int,    PTR_SIZE, PTR_ALIGN, TypeFlag_Unsigned);
+	t_int8    = alloc_universal_type("int8",    Type_Int,    1, 1, 0);
+	t_int16   = alloc_universal_type("int16",   Type_Int,    2, 2, 0);
+	t_int32   = alloc_universal_type("int32",   Type_Int,    4, 4, 0);
+	t_int64   = alloc_universal_type("int64",   Type_Int,    8, 8, 0);
+	t_uint8   = alloc_universal_type("uint8",   Type_Int,    1, 1, TypeFlag_Unsigned);
+	t_uint16  = alloc_universal_type("uint16",  Type_Int,    2, 2, TypeFlag_Unsigned);
+	t_uint32  = alloc_universal_type("uint32",  Type_Int,    4, 4, TypeFlag_Unsigned);
+	t_uint64  = alloc_universal_type("uint64",  Type_Int,    8, 8, TypeFlag_Unsigned);
+	t_float32 = alloc_universal_type("float32", Type_Float,  4, 4, 0);
+	t_float64 = alloc_universal_type("float64", Type_Float,  8, 8, 0);
+	t_string  = alloc_universal_type("string",  Type_String, 2*PTR_SIZE, PTR_ALIGN, 0);
+	t_rune    = alloc_universal_type("rune",    Type_Rune,   4, 4, 0);
+	t_rawptr  = alloc_universal_type("rawptr",  Type_Ptr,    PTR_SIZE, PTR_SIZE, 0);
+
+	alloc_universal_constant("false", t_untyped_bool, const_value_bool(false));
+	alloc_universal_constant("true",  t_untyped_bool, const_value_bool(true));
+
+	alloc_universal_entity("nil", Entity_Nil, t_untyped_nil);
 }
 
 void checker_init(Checker *c) {
@@ -493,8 +541,8 @@ void check_entity_decl(Checker *c, Entity *e) {
 			e->type = check_type(c, type_expr);
 			c->context.type_hint = e->type;
 		}
-
-		o = check_expr(c, init_expr);
+		check_expr(c, &o, init_expr);
+		check_init_variable(c, e, &o, "variable declaration");
 		break;
 	}
 	case Entity_Const: {
@@ -505,7 +553,7 @@ void check_entity_decl(Checker *c, Entity *e) {
 			e->type = check_type(c, type_expr);
 			c->context.type_hint = e->type;
 		}
-		o = check_expr(c, init_expr);
+		check_expr(c, &o, init_expr);
 		break;
 	}
 	case Entity_Type:
@@ -591,14 +639,14 @@ bool check_arity_match(Checker *c, AstExpr **lhs, isize lhs_count, AstType *type
 	return true;
 }
 
-Type *check_init_variable(Checker *c, Entity *e, Operand *o, char const *context_name) {
+void check_init_variable(Checker *c, Entity *e, Operand *o, char const *context_name) {
 	if (o->mode == Addressing_Invalid ||
 	    o->type == t_invalid ||
 	    e->type == t_invalid) {
 		if (e->type == NULL) {
 			e->type = t_invalid;
 		}
-		return NULL;
+		return;
 	}
 	if (e->type == NULL) {
 		Type *t = o->type;
@@ -611,9 +659,8 @@ Type *check_init_variable(Checker *c, Entity *e, Operand *o, char const *context
 
 	check_assignment(c, o, e->type, context_name);
 	if (o->mode == Addressing_Invalid) {
-		return NULL;
+		return;
 	}
-	return e->type;
 }
 
 
@@ -627,7 +674,8 @@ void check_init_variables(Checker *c, Entity **lhs, isize lhs_count, AstExpr **r
 		for (i = 0; i < count; i++) {
 			Entity *e = lhs[i];
 			DeclInfo *d = e->decl;
-			Operand o = check_expr(c, rhs[i]);
+			Operand o = {0};
+			check_expr(c, &o, rhs[i]);
 			check_init_variable(c, e, &o, context_name);
 			if (d != NULL) {
 				d->init_expr = o.expr;
@@ -720,6 +768,154 @@ void check_var_decl(Checker *c, AstExpr **lhs, isize lhs_count, AstType *type_ex
 
 }
 
+void check_init_constant(Checker *c, Entity *e, Operand *o) {
+	if (o->mode == Addressing_Invalid ||
+	    o->type == t_invalid ||
+	    e->type == t_invalid) {
+		if (e->type == NULL) {
+			e->type = t_invalid;
+		}
+		return;
+	}
+	if (o->mode != Addressing_Const) {
+		char *str = expr_to_string(o->expr);
+		error(o->expr->pos, "'%s' is not a constant", str);
+		mem_free(str);
+		if (e->type == NULL) {
+			e->type = t_invalid;
+		}
+		return;
+	}
+	if (!is_type_constant_type(o->type)) {
+		char *str = type_to_string(o->type);
+		error(o->expr->pos, "invalid constant type: '%s'", str);
+		mem_free(str);
+		if (e->type == NULL) {
+			e->type = t_invalid;
+		}
+		return;
+	}
+
+	if (e->type == NULL) {
+		e->type = o->type;
+	}
+
+	check_assignment(c, o, e->type, "constant declaration");
+	if (o->mode == Addressing_Invalid) {
+		return;
+	}
+	e->value = o->value;
+}
+
+
+
+void check_init_constants(Checker *c, Entity **lhs, isize lhs_count, AstExpr **rhs, isize rhs_count) {
+	if ((lhs == NULL || lhs_count == 0) && rhs_count == 0) {
+		return;
+	} else {
+		isize i;
+		isize count = MIN(lhs_count, rhs_count);
+		for (i = 0; i < count; i++) {
+			Entity *e = lhs[i];
+			DeclInfo *d = e->decl;
+			Operand o = {0};
+			check_expr(c, &o, rhs[i]);
+			check_init_constant(c, e, &o);
+			if (d != NULL) {
+				d->init_expr = o.expr;
+			}
+		}
+
+		if (rhs_count > 0 && lhs_count != rhs_count) {
+			error(lhs[0]->ident->pos, "assignment count mismatch '%ld' = '%ld'", lhs_count, rhs_count);
+		}
+	}
+}
+
+
+void check_const_decl(Checker *c, AstExpr **lhs, isize lhs_count, AstType *type_expr, AstExpr **rhs, isize rhs_count) {
+	isize i;
+	Type *init_type = NULL;
+	Entity **entities = NULL; // dynamic buffer
+	isize new_name_count = 0;
+
+	if (lhs_count == 0) {
+		return;
+	}
+	buf_reserve(entities, lhs_count);
+
+	for (i = 0; i < lhs_count; i++) {
+		AstExpr *name = lhs[i];
+		Entity *entity = NULL;
+
+		if (name->kind != AstExpr_Ident) {
+			error(name->pos, "var declarations must use identifiers for a name");
+		} else {
+			Token token = name->ident.token;
+			String str = token.string;
+			Entity *found = NULL;
+			if (!is_blank_name(str)) {
+				found = current_scope_lookup_entity(c->context.scope, str);
+				new_name_count += 1;
+			}
+			if (found == NULL) {
+				entity = alloc_entity(Entity_Const, name, NULL);
+			} else {
+				TokenPos pos = found->ident->pos;
+				error(pos,
+				      "redeclaration of '%.*s' in this scope\n"
+				      "\tat %.*s(%ld:%ld)",
+				      LIT(str), LIT(pos.file), pos.line, pos.column);
+				entity = found;
+			}
+		}
+		if (entity == NULL) {
+			entity = alloc_entity_dummy_variable(c->global_scope, name);
+		}
+		buf_push(entities, entity);
+	}
+
+	if (new_name_count == 0) {
+		error(lhs[0]->pos, "no new declarations on the lhs");
+	}
+
+	init_type = NULL;
+	if (type_expr != NULL) {
+		init_type = check_type(c, type_expr);
+		if (!is_type_constant_type(init_type)) {
+			char *str = type_to_string(init_type);
+			error(type_expr->pos, "invalid constant type '%s'", str);
+			mem_free(str);
+			init_type = t_invalid;
+			return;
+		}
+	}
+
+	for (i = 0; i < buf_len(entities); i++) {
+		Entity *e = entities[i];
+		ASSERT(e != NULL);
+		if (e->flags & EntityFlag_Visited) {
+			e->type = t_invalid;
+			continue;
+		}
+		e->flags |= EntityFlag_Visited;
+		e->state = EntityState_Processing;
+		if (e->type == NULL) {
+			e->type = init_type;
+			e->state = EntityState_Resolved;
+		}
+	}
+
+	check_arity_match(c, lhs, lhs_count, type_expr, rhs, rhs_count);
+	check_init_constants(c, entities, buf_len(entities), rhs, rhs_count);
+
+	for (i = 0; i < buf_len(entities); i++) {
+		Entity *e = entities[i];
+		add_entity(c, e);
+	}
+}
+
+
 
 void check_type_decl(Checker *c, Entity *e, AstType *type_expr) {
 	Type *bt = NULL;
@@ -748,9 +944,11 @@ void check_stmt(Checker *c, AstStmt *stmt, u32 flags) {
 	case AstStmt_Decl:
 		check_decl(c, stmt->decl);
 		break;
-	case AstStmt_Expr:
-		check_expr(c, stmt->expr);
+	case AstStmt_Expr: {
+		Operand o = {0};
+		check_expr(c, &o, stmt->expr);
 		break;
+	}
 	case AstStmt_Block:
 		check_block(c, stmt, flags);
 		break;
@@ -759,8 +957,11 @@ void check_stmt(Checker *c, AstStmt *stmt, u32 flags) {
 		if (stmt->assign.op.kind == Token_Define) {
 			check_var_decl(c, &stmt->assign.lhs, 1, NULL, &stmt->assign.rhs, 1);
 		} else {
-			Operand rhs = check_expr(c, stmt->assign.rhs);
-			Operand lhs = check_expr(c, stmt->assign.lhs);
+			Operand lhs = {0};
+			Operand rhs = {0};
+			check_expr(c, &rhs, stmt->assign.rhs);
+			check_expr(c, &lhs, stmt->assign.lhs);
+			check_assignment(c, &rhs, lhs.type, "assignment");
 		}
 		break;
 	}
@@ -771,7 +972,8 @@ void check_stmt(Checker *c, AstStmt *stmt, u32 flags) {
 	}
 
 	case AstStmt_If: {
-		Operand cond = check_expr(c, stmt->if_stmt.cond);
+		Operand cond = {0};
+		check_expr(c, &cond, stmt->if_stmt.cond);
 		if (!is_operand_value(&cond)) {
 			error(cond.expr->pos, "expected a value in if condition, got %.*s", LIT(addressing_mode_strings[cond.mode]));
 		}
@@ -789,7 +991,8 @@ void check_stmt(Checker *c, AstStmt *stmt, u32 flags) {
 		Scope *scope = push_scope(c, stmt);
 		check_stmt(c, init, 0);
 		if (cond) {
-			Operand x = check_expr(c, cond);
+			Operand x = {0};
+			check_expr(c, &x, cond);
 			if (!is_operand_value(&x)) {
 				error(x.expr->pos, "expected a value in for condition, got %.*s", LIT(addressing_mode_strings[x.mode]));
 			}
@@ -804,7 +1007,8 @@ void check_stmt(Checker *c, AstStmt *stmt, u32 flags) {
 		u32 new_flags = flags | StmtFlag_BreakAllowed | StmtFlag_ContinueAllowed;
 		AstExpr *cond = stmt->while_stmt.cond;
 		if (cond) {
-			Operand x = check_expr(c, cond);
+			Operand x = {0};
+			check_expr(c, &x, cond);
 			if (!is_operand_value(&x)) {
 				error(x.expr->pos, "expected a value in while condition, got %.*s", LIT(addressing_mode_strings[x.mode]));
 			}
@@ -815,7 +1019,8 @@ void check_stmt(Checker *c, AstStmt *stmt, u32 flags) {
 	case AstStmt_Return: {
 		AstExpr *expr = stmt->return_stmt.expr;
 		if (expr) {
-			Operand x = check_expr(c, expr);
+			Operand x = {0};
+			check_expr(c, &x, expr);
 		}
 		break;
 	}
@@ -842,17 +1047,36 @@ void check_decl(Checker *c, AstDecl *decl) {
 		check_var_decl(c, lhs, lhs_count, type_expr, rhs, rhs_count);
 		return;
 	}
-	case AstDecl_Const:
+	case AstDecl_Const: {
+		AstExpr **lhs = decl->const_decl.lhs;
+		AstExpr **rhs = decl->const_decl.rhs;
+		AstType *type_expr = decl->const_decl.type;
+		isize lhs_count = decl->const_decl.lhs_count;
+		isize rhs_count = decl->const_decl.rhs_count;
+		check_const_decl(c, lhs, lhs_count, type_expr, rhs, rhs_count);
 		return;
+	}
 
-	case AstDecl_Type:
+	case AstDecl_Type: {
+		Entity *e = NULL;
+		DeclInfo *d = NULL;
+		AstExpr *name = decl->type_decl.name;
+		if (name->kind != AstExpr_Ident) {
+			error(name->pos, "type declarations must use identifiers for a name");
+			return;
+		}
+		e = alloc_entity(Entity_Type, name, decl);
+		d = alloc_decl_info(c, e, decl->type_decl.type, NULL);
+		add_entity(c, e);
+		check_type_decl(c, e, decl->type_decl.type);
 		return;
+	}
 	case AstDecl_Proc:
 		error(decl->pos, "proc declarations are only allowed a file scope");
-		break;
+		return;
 	case AstDecl_Import:
 		error(decl->pos, "import declarations are only allowed a file scope");
-		break;
+		return;
 	}
 }
 
@@ -880,6 +1104,7 @@ Entity *check_ident(Checker *c, Operand *o, AstExpr *expr) {
 
 	e->flags |= EntityFlag_Used;
 	type = e->type;
+	ASSERT_MSG(type != NULL, "%.*s", LIT(e->name));
 
 	switch (e->kind) {
 	case Entity_Const:
@@ -912,6 +1137,11 @@ Entity *check_ident(Checker *c, Operand *o, AstExpr *expr) {
 			type = t_invalid;
 		}
 		break;
+
+	case Entity_Nil:
+		o->mode = Addressing_Value;
+		break;
+
 	default:
 		PANIC("unknown EntityKind %d", e->kind);
 		break;
@@ -1322,6 +1552,12 @@ bool check_is_assignable_to(Checker *c, Operand *x, Type *type) {
 	if (are_types_equal(src, dst)) {
 		return true;
 	}
+	src = base_type(src);
+	dst = base_type(dst);
+
+	if (src == t_untyped_nil) {
+		return type_has_nil(dst);
+	}
 
 	if (is_type_untyped(src)) {
 		if (is_type_constant_type(dst)) {
@@ -1416,59 +1652,60 @@ bool check_assignment(Checker *c, Operand *x, Type *type, char const *context_na
 	return true;
 }
 
-Operand check_expr_base_internal(Checker *c, AstExpr *expr, Type *type_hint) {
-	Operand o = {0};
-	o.expr = expr;
+void check_expr_base_internal(Checker *c, Operand *o, AstExpr *expr, Type *type_hint) {
+	o->expr = expr;
 
 	ASSERT(expr != NULL);
 	switch (expr->kind) {
 	case AstExpr_Literal:
-		o.mode = Addressing_Const;
-		o.value = const_value_from_literal(expr->literal);
-		o.type = type_from_literal(expr->literal);
-		return o;
+		o->mode = Addressing_Const;
+		o->value = const_value_from_literal(expr->literal);
+		o->type = type_from_literal(expr->literal);
+		return;
 	case AstExpr_Ident: {
-		Entity *e = check_ident(c, &o, expr);
+		Entity *e = check_ident(c, o, expr);
 		if (e == NULL) {
-			o.type = t_invalid;
-			o.mode = Addressing_Invalid;
-			return o;
+			o->type = t_invalid;
+			o->mode = Addressing_Invalid;
+			return;
 		}
-		return o;
+		return;
 	}
 	case AstExpr_TypeExpr: {
 		Type *t = check_type(c, expr->type_expr);
 		if (t != t_invalid) {
-			o.mode = Addressing_Type;
+			o->mode = Addressing_Type;
 		}
-		o.type = t;
-		return o;
+		o->type = t;
+		return;
 	}
 	case AstExpr_Paren:
-		return check_expr(c, expr->paren.expr);
+		check_expr(c, o, expr->paren.expr);
+		return;
 	case AstExpr_Call: {
 		isize cargs = expr->call.arg_count;
-		Operand p = check_expr_or_type(c, expr->call.expr, NULL);
+		Operand p = {0};
+		check_expr_or_type(c, &p, expr->call.expr, NULL);
 		if (p.mode == Addressing_Type) {
 			switch (cargs) {
 			case 0:  error(p.expr->pos, "missing argument in type convertion");   break;
 			default: error(p.expr->pos, "too many arguments in type convertion"); break;
 			case 1: {
 				AstExpr *arg = expr->call.args[0];
-				Operand x = check_expr(c, arg);
-				if (x.mode != Addressing_Invalid) {
-					check_cast(c, &x, p.type);
+				check_expr(c, o, arg);
+				if (o->mode != Addressing_Invalid) {
+					check_cast(c, o, p.type);
 				}
-				return x;
+				return;
 			}
 			}
 			ASSERT(cargs != 1);
-			o.mode = Addressing_Invalid;
-			return o;
+			o->mode = Addressing_Invalid;
+			return;
 		}
 		if (p.type == NULL || p.type == t_invalid || p.type->kind != Type_Proc) {
 			error(p.expr->pos, "call expected procedure");
-			return o;
+			return;
 		} else {
 			isize pargs = p.type->proc.field_count;
 			isize arg_count = MIN(pargs, cargs);
@@ -1481,7 +1718,8 @@ Operand check_expr_base_internal(Checker *c, AstExpr *expr, Type *type_hint) {
 			for (i = 0; i < arg_count; i++) {
 				AstExpr *arg = expr->call.args[i];
 				Entity *field = p.type->proc.fields[i];
-				Operand x = check_expr(c, arg);
+				Operand x = {0};
+				check_expr(c, &x, arg);
 				if (!check_assignment(c, &x, field->type, "call")) {
 					String name = field->name;
 					char *st = type_to_string(field->type);
@@ -1494,10 +1732,10 @@ Operand check_expr_base_internal(Checker *c, AstExpr *expr, Type *type_hint) {
 				}
 			}
 			if (p.type->proc.ret != NULL) {
-				o.mode = Addressing_Value;
-				o.type = p.type->proc.ret;
+				o->mode = Addressing_Value;
+				o->type = p.type->proc.ret;
 			} else {
-				o.mode = Addressing_NoValue;
+				o->mode = Addressing_NoValue;
 			}
 		}
 		break;
@@ -1507,53 +1745,93 @@ Operand check_expr_base_internal(Checker *c, AstExpr *expr, Type *type_hint) {
 	case AstExpr_Selector:
 		break;
 	case AstExpr_Deref: {
-		Operand x = check_expr(c, expr->deref.expr);
-		if (is_operand_value(&x)) {
-			error(x.expr->pos, "Cannot derefence a non-pointer value");
-			return o;
+		check_expr(c, o, expr->deref.expr);
+		if (is_operand_value(o)) {
+			error(o->expr->pos, "Cannot derefence a non-pointer value");
+			return;
 		}
-		if (x.type == NULL || x.type == t_invalid || x.type->kind != Type_Ptr) {
-			error(x.expr->pos, "Cannot derefence a non-pointer");
-			return o;
+		if (o->type == NULL || o->type == t_invalid || o->type->kind != Type_Ptr) {
+			error(o->expr->pos, "Cannot derefence a non-pointer");
+			return;
 		}
-		if (x.type->ptr.elem == NULL) {
-			error(x.expr->pos, "Cannot derefence a rawptr");
-			return o;
+		if (o->type->ptr.elem == NULL) {
+			error(o->expr->pos, "Cannot derefence a rawptr");
+			return;
 		}
-		o.mode = Addressing_Var;
-		o.type = type_deref(x.type);
-		return o;
+		o->mode = Addressing_Var;
+		o->type = type_deref(o->type);
+		return;
 	}
 	case AstExpr_Unary: {
-		Operand x = check_expr_base(c, expr->unary.expr, type_hint);
-		if (x.mode == Addressing_Invalid) {
-			x.expr = expr;
-			return x;
+		check_expr_base(c, o, expr->unary.expr, type_hint);
+		if (o->mode == Addressing_Invalid) {
+			o->expr = expr;
+			return;
 		}
-		return check_unary_expr(c, &x, expr->unary.op);
+		check_unary_expr(c, o, expr->unary.op);
+		return;
 	}
 	case AstExpr_Binary: {
 		Token op = expr->binary.op;
-		Operand x = check_expr(c, expr->binary.left);
-		Operand y = check_expr(c, expr->binary.right);
-		return check_binary_expr(c, x, y, op);
+		Operand x = {0};
+		Operand y = {0};
+		check_expr(c, &x, expr->binary.left);
+		check_expr(c, &y, expr->binary.right);
+		*o = check_binary_expr(c, x, y, op);
+		return;
 	}
 	case AstExpr_Ternary: {
-		Operand cond = check_expr(c, expr->ternary.cond);
-		Operand x = check_expr(c, expr->ternary.left);
-		Operand y = check_expr(c, expr->ternary.right);
-		return x;
+		Operand x = {0};
+		Operand y = {0};
+		check_expr(c, o, expr->ternary.cond);
+		if (o->mode == Addressing_Invalid) {
+			return;
+		}
+		if (o->type->kind != Type_Bool) {
+			char *str = type_to_string(o->type);
+			error(o->expr->pos, "boolean expected for ternary condition, got %s", str);
+			mem_free(str);
+		}
+		check_expr(c, &x, expr->ternary.left);
+		check_expr(c, &y, expr->ternary.right);
+		if (!convert_to_typed(c, &x, y.type)) {
+			o->mode = Addressing_Invalid;
+			o->expr = x.expr;
+			return;
+		}
+		if (!convert_to_typed(c, &y, x.type)) {
+			o->mode = Addressing_Invalid;
+			o->expr = y.expr;
+			return;
+		}
+
+		if (!are_types_equal(x.type, y.type)) {
+			if (x.type != t_invalid &&
+			    y.type != t_invalid) {
+				char *xt = type_to_string(x.type);
+				char *yt = type_to_string(y.type);
+				error(expr->pos, "mismatched types in ternary expression, %s vs %s", xt, yt);
+				mem_free(yt);
+				mem_free(xt);
+			}
+			o->mode = Addressing_Invalid;
+			o->expr = x.expr;
+			return;
+		}
+
+		*o = x;
+		return;
 	}
 	}
 
-	return o;
+	return;
 }
 
-Operand check_expr_base(Checker *c, AstExpr *expr, Type *type_hint) {
-	Operand o = check_expr_base_internal(c, expr, type_hint);
+void check_expr_base(Checker *c, Operand *o, AstExpr *expr, Type *type_hint) {
 	Type *type = NULL;
 	ConstValue value = {0};
-	switch (o.mode) {
+	check_expr_base_internal(c, o, expr, type_hint);
+	switch (o->mode) {
 	case Addressing_Invalid:
 		type = t_invalid;
 		break;
@@ -1561,16 +1839,15 @@ Operand check_expr_base(Checker *c, AstExpr *expr, Type *type_hint) {
 		type = NULL;
 		break;
 	case Addressing_Const:
-		type = o.type;
-		value = o.value;
+		type = o->type;
+		value = o->value;
 		break;
 	default:
-		type = o.type;
+		type = o->type;
 		break;
 	}
 
-	add_expr_info(c, expr, o.mode, type, value);
-	return o;
+	add_expr_info(c, expr, o->mode, type, value);
 }
 
 
@@ -1594,18 +1871,16 @@ void error_operand_no_expr(Operand *o) {
 }
 
 
-Operand check_expr_or_type(Checker *c, AstExpr *expr, Type *type_hint) {
-	Operand o = check_expr_base(c, expr, type_hint);
-	error_operand_no_value(&o);
-	return o;
+void check_expr_or_type(Checker *c, Operand *o, AstExpr *expr, Type *type_hint) {
+	check_expr_base(c, o, expr, type_hint);
+	error_operand_no_value(o);
 }
 
 
-Operand check_expr(Checker *c, AstExpr *expr) {
-	Operand o = check_expr_base(c, expr, NULL);
-	error_operand_no_value(&o);
-	error_operand_no_expr(&o);
-	return o;
+void check_expr(Checker *c, Operand *o, AstExpr *expr) {
+	check_expr_base(c, o, expr, NULL);
+	error_operand_no_value(o);
+	error_operand_no_expr(o);
 }
 
 Type *check_type(Checker *c, AstType *type_expr) {
@@ -1636,7 +1911,8 @@ Type *check_type_expr_internal(Checker *c, AstType *type_expr, Type *named_type)
 		if (size != NULL) {
 			i64 len = 0;
 			Type *elem_type = NULL;
-			Operand x = check_expr(c, size);
+			Operand x = {0};
+			check_expr(c, &x, size);
 			if (x.mode == Addressing_Const && is_type_integer(x.type)) {
 				len = x.value.v_int;
 				if (len < 0) {
@@ -1659,8 +1935,10 @@ Type *check_type_expr_internal(Checker *c, AstType *type_expr, Type *named_type)
 		break;
 	case AstType_Range: {
 		i64 lower, upper;
-		Operand x = check_expr(c, type_expr->range.from);
-		Operand y = check_expr(c, type_expr->range.to);
+		Operand x = {0};
+		Operand y = {0};
+		check_expr(c, &x, type_expr->range.from);
+		check_expr(c, &y, type_expr->range.to);
 		if (x.mode != Addressing_Const || !is_type_integer(x.type)) {
 			error(x.expr->pos, "range fields must be constant integers");
 			return t_invalid;
@@ -1679,7 +1957,6 @@ Type *check_type_expr_internal(Checker *c, AstType *type_expr, Type *named_type)
 			lower = upper;
 			upper = temp;
 		}
-		error(type_expr->pos, "TODO: range type");
 		return alloc_type_range(lower, upper);
 	}
 	case AstType_Pointer: {

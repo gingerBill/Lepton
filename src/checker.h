@@ -50,6 +50,7 @@ enum EntityKind {
 	Entity_Type,
 	Entity_Label,
 	Entity_ImportName,
+	Entity_Nil,
 
 	Entity_COUNT,
 };
@@ -180,17 +181,20 @@ void scope_destroy(Scope *scope);
 
 Type *type_from_literal(Token lit);
 
-void    check_decl(Checker *c, AstDecl *decl);
-Type *  check_type(Checker *c, AstType *type);
+void  check_decl     (Checker *c, AstDecl *decl);
+Type *check_type     (Checker *c, AstType *type);
 Type *check_type_expr(Checker *c, AstType *type_expr, Type *named_type);
-void    check_stmt(Checker *c, AstStmt *stmt, u32 flags);
-Operand check_expr(Checker *c, AstExpr *expr);
-Operand check_expr_base(Checker *c, AstExpr *expr, Type *type_hint);
-Operand check_expr_or_type(Checker *c, AstExpr *expr, Type *type_hint);
-bool check_assignment(Checker *c, Operand *x, Type *type, char const *context_name);
+void  check_stmt     (Checker *c, AstStmt *stmt, u32 flags);
+void  check_expr        (Checker *c, Operand *o, AstExpr *expr);
+void  check_expr_base   (Checker *c, Operand *o, AstExpr *expr, Type *type_hint);
+void  check_expr_or_type(Checker *c, Operand *o, AstExpr *expr, Type *type_hint);
+bool  check_assignment  (Checker *c, Operand *o, Type *type, char const *context_name);
+void check_init_variable(Checker *c, Entity *e, Operand *o, char const *context_name);
+void check_init_constant(Checker *c, Entity *e, Operand *o);
 
 void check_var_decl(Checker *c, AstExpr **lhs, isize lhs_count, AstType *type_expr, AstExpr **rhs, isize rhs_count);
 void check_type_decl(Checker *c, Entity *e, AstType *type_expr);
+
 
 Entity *alloc_entity(EntityKind kind, AstExpr *ident, AstDecl *node);
 DeclInfo *alloc_decl_info(Checker *c, Entity *e, AstType *type_expr, AstExpr *init_expr);
