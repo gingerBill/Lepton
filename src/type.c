@@ -18,6 +18,7 @@ enum TypeKind {
 	Type_Float,
 	Type_String,
 
+	Type_Named,
 	Type_Ptr,
 	Type_Array,
 	Type_Slice,
@@ -27,7 +28,7 @@ enum TypeKind {
 	Type_Enum,
 	Type_Proc,
 
-	Type_COUNT,
+	Type_COUNT
 };
 
 enum TypeFlag {
@@ -51,8 +52,12 @@ struct Type {
 	u32      flags;
 	i64      size;
 	i64      align;
-	Entity * entity;
+	String   name;
 	union {
+		struct {
+			Type *  base;
+			Entity *entity;
+		} named;
 		struct {
 			Type *elem; // NULL if `rawptr`
 		} ptr;
@@ -132,6 +137,26 @@ i64 type_align_of(Type *t) {
 	ASSERT(t->align >= 0);
 	return t->align;
 }
+
+Type *base_type(Type *t) {
+	for (;;) {
+		if (t == NULL) {
+			return NULL;
+		}
+		if (t->kind == Type_Named) {
+			t = t->named.base;
+		} else {
+			return t;
+		}
+	}
+}
+
+void set_base_type(Type *t, Type *base) {
+	if (t && t->kind == Type_Named) {
+		t->named.base = base_type(base);
+	}
+}
+
 
 bool is_type_untyped(Type *t) {
 	if (t == NULL) return false;
@@ -388,10 +413,12 @@ bool are_types_equal(Type *x, Type *y) {
 char *type_to_string_internal(char *str, Type *t) {
 	if (t == NULL) {
 		return buf_printf(str, "<no type>");
-	} else if (t->entity != NULL) {
-		return buf_printf(str, "%.*s", LIT(t->entity->name));
+	} else if (t->name.len > 0) {
+		return buf_printf(str, "%.*s", LIT(t->name));
 	}
 	switch (t->kind) {
+	case Type_Named:
+		return buf_printf(str, "%.*s", LIT(t->named.entity->name));
 	case Type_Ptr:
 		if (t->ptr.elem) {
 			buf_printf(str, "^");

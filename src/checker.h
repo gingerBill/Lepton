@@ -76,6 +76,8 @@ struct Entity {
 	DeclInfo *  decl;
 	Scope *     scope;
 	Type *      type;
+
+	ConstValue value;
 };
 
 
@@ -126,6 +128,8 @@ struct CheckerContext {
 	Entity *  curr_proc;
 	String    proc_name;
 	Type *    type_hint;
+
+	Entity **type_path;
 };
 
 struct ProcInfo {
@@ -148,9 +152,6 @@ struct Checker {
 
 	ProcInfo *procs;
 	Map       expr_info_map; // Key: AstExpr *; Value: ExprInfo *
-
-	Entity **type_path;
-	isize    type_level;
 };
 
 
@@ -181,11 +182,15 @@ Type *type_from_literal(Token lit);
 
 void    check_decl(Checker *c, AstDecl *decl);
 Type *  check_type(Checker *c, AstType *type);
+Type *check_type_expr(Checker *c, AstType *type_expr, Type *named_type);
 void    check_stmt(Checker *c, AstStmt *stmt, u32 flags);
 Operand check_expr(Checker *c, AstExpr *expr);
 Operand check_expr_base(Checker *c, AstExpr *expr, Type *type_hint);
 Operand check_expr_or_type(Checker *c, AstExpr *expr, Type *type_hint);
 bool check_assignment(Checker *c, Operand *x, Type *type, char const *context_name);
+
+void check_var_decl(Checker *c, AstExpr **lhs, isize lhs_count, AstType *type_expr, AstExpr **rhs, isize rhs_count);
+void check_type_decl(Checker *c, Entity *e, AstType *type_expr);
 
 Entity *alloc_entity(EntityKind kind, AstExpr *ident, AstDecl *node);
 DeclInfo *alloc_decl_info(Checker *c, Entity *e, AstType *type_expr, AstExpr *init_expr);
@@ -201,6 +206,12 @@ ExprInfo *get_expr_info   (Checker *c, AstExpr *expr);
 void      update_expr_info(Checker *c, AstExpr *expr, ConstValue value);
 void      remove_expr_info(Checker *c, AstExpr *expr);
 
+
+void check_type_path_push(Checker *c, Entity *e);
+Entity *check_type_path_pop(Checker *c);
+
+
+char *type_expr_to_string(AstType *expr);
 char *expr_to_string(AstExpr *expr);
 char *type_to_string(Type *type);
 

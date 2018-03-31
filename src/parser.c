@@ -485,6 +485,7 @@ AstStmt *parse_simple_stmt(Parser *p) {
 	lhs = parse_expr(p, true);
 	token = p->curr_token;
 	switch (token.kind) {
+	case Token_Define:
 	case Token_Assign:
 	case Token_AddEq:
 	case Token_SubEq:

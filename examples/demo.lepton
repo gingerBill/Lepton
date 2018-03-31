@@ -2,13 +2,14 @@ const a, b, c = 123, 345, 456
 // var x = 123
 // var y = x * 2
 type Vector [3]int
+type Bar [3]Foo
+type Foo [3]Bar
 
 proc f(): int {
 	type SmallInt range -10..10
-	var x = 123
-	x = 321
-	var y = +23 * 2 / -3
-	x = add(y, x);
+	var x: int = 123
+	y := +23 * 2 / -3 + x;
+	// x = add(y, x);
 
 	return 1
 }

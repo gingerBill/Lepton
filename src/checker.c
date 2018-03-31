@@ -23,11 +23,11 @@ Type *alloc_universal_type(char *name, TypeKind kind, i64 size, i64 align, u32 t
 	t->size  = size;
 	t->align = align;
 	t->flags = type_flags;
+	t->name = token.string;
 
 	e = alloc_entity(Entity_Type, ident, NULL);
 	e->type = t;
 	e->state = EntityState_Resolved;
-	t->entity = e;
 	prev = scope_insert_entity(universal_scope, e);
 	ASSERT(prev == NULL);
 	return t;
@@ -68,6 +68,41 @@ void checker_init(Checker *c) {
 	c->context.scope = c->global_scope;
 
 	map_init(&c->expr_info_map);
+}
+
+void check_type_path_push(Checker *c, Entity *e) {
+	ASSERT(e != NULL);
+	buf_push(c->context.type_path, e);
+}
+Entity *check_type_path_pop(Checker *c) {
+	Entity *prev = NULL;
+	isize n = buf_len(c->context.type_path);
+	ASSERT(n > 0);
+	prev = c->context.type_path[n-1];
+	buf_pop(c->context.type_path);
+	return prev;
+}
+
+bool check_cycle(Checker *c, Entity *curr, bool report) {
+	isize i, j;
+	if (curr->state != EntityState_Processing) {
+		return false;
+	}
+	for (i = 0; i < buf_len(c->context.type_path); i++) {
+		Entity *prev = c->context.type_path[i];
+		if (prev == curr) {
+			if (report) {
+				error(curr->ident->pos, "illegal declaration cycle of '%.*s'", LIT(curr->name));
+				for (j = i; j < buf_len(c->context.type_path); j++) {
+					Entity *curr = c->context.type_path[j];
+					error(curr->ident->pos, "\t%.*s refers to", LIT(curr->name));
+				}
+				error(curr->ident->pos, "\t%.*s", LIT(curr->name));
+			}
+			return true;
+		}
+	}
+	return false;
 }
 
 
@@ -439,12 +474,11 @@ void check_entity_decl(Checker *c, Entity *e) {
 		return;
 	}
 	if (e->type != NULL || e->state != EntityState_Unresolved) {
-		error(e->ident->pos, "illegal declaration cycle of `%.*s`", LIT(e->name));
+		error(e->ident->pos, "illegal declaration cycle of '%.*s'", LIT(e->name));
 		return;
 	}
 	ASSERT(e->state == EntityState_Unresolved);
 
-	e->type = t_invalid;
 	e->state = EntityState_Processing;
 
 	c->context.decl = e->decl;
@@ -474,10 +508,9 @@ void check_entity_decl(Checker *c, Entity *e) {
 		o = check_expr(c, init_expr);
 		break;
 	}
-	case Entity_Type: {
-		e->type = check_type(c, e->decl->type_expr);
+	case Entity_Type:
+		check_type_decl(c, e, e->decl->type_expr);
 		break;
-	}
 	case Entity_Proc: {
 		e->type = check_type(c, e->decl->type_expr);
 		ASSERT(e->type->kind == Type_Proc);
@@ -687,6 +720,24 @@ void check_var_decl(Checker *c, AstExpr **lhs, isize lhs_count, AstType *type_ex
 
 }
 
+
+void check_type_decl(Checker *c, Entity *e, AstType *type_expr) {
+	Type *bt = NULL;
+	Type *named = NULL;
+
+	ASSERT(e->type == NULL);
+
+	named = alloc_type(Type_Named);
+	named->named.entity = e;
+	e->type = named;
+
+	check_type_path_push(c, e);
+	bt = check_type_expr(c, type_expr, named);
+	check_type_path_pop(c);
+
+	named->named.base = base_type(bt);
+}
+
 void check_stmt(Checker *c, AstStmt *stmt, u32 flags) {
 	if (stmt == NULL) return;
 
@@ -805,9 +856,12 @@ void check_decl(Checker *c, AstDecl *decl) {
 	}
 }
 
-Entity *check_ident(Checker *c, AstExpr *expr) {
+Entity *check_ident(Checker *c, Operand *o, AstExpr *expr) {
 	String name;
 	Entity *e;
+	Type *type;
+	o->mode = Addressing_Invalid;
+	o->expr = expr;
 
 	ASSERT(expr->kind == AstExpr_Ident);
 	name = expr->ident.token.string;
@@ -823,6 +877,47 @@ Entity *check_ident(Checker *c, AstExpr *expr) {
 	}
 	check_entity_decl(c, e);
 	add_entity_use(c, expr, e);
+
+	e->flags |= EntityFlag_Used;
+	type = e->type;
+
+	switch (e->kind) {
+	case Entity_Const:
+		if (type == t_invalid) {
+			o->type = t_invalid;
+			return e;
+		}
+		o->value = e->value;
+		if (o->value.kind == ConstValue_Invalid) {
+			return e;
+		}
+		o->mode = Addressing_Const;
+		break;
+
+	case Entity_Var:
+		if (type == t_invalid) {
+			o->type = t_invalid;
+			return e;
+		}
+		o->mode = Addressing_Var;
+		break;
+
+	case Entity_Proc:
+		o->mode = Addressing_Value;
+		break;
+
+	case Entity_Type:
+		o->mode = Addressing_Type;
+		if (check_cycle(c, e, true)) {
+			type = t_invalid;
+		}
+		break;
+	default:
+		PANIC("unknown EntityKind %d", e->kind);
+		break;
+	}
+
+	o->type = type;
 	return e;
 }
 
@@ -1333,22 +1428,11 @@ Operand check_expr_base_internal(Checker *c, AstExpr *expr, Type *type_hint) {
 		o.type = type_from_literal(expr->literal);
 		return o;
 	case AstExpr_Ident: {
-		Entity *e = check_ident(c, expr);
+		Entity *e = check_ident(c, &o, expr);
 		if (e == NULL) {
 			o.type = t_invalid;
 			o.mode = Addressing_Invalid;
 			return o;
-		}
-		o.type = e->type;
-		switch (e->kind) {
-		case Entity_Var:   o.mode = Addressing_Var;     break;
-		case Entity_Const: o.mode = Addressing_Const;   break;
-		case Entity_Type:  o.mode = Addressing_Type;    break;
-		case Entity_Proc:  o.mode = Addressing_Value;   break;
-		case Entity_Label: o.mode = Addressing_NoValue; break; // NOTE(bill): Even though it's a label
-		default:
-			error(expr->pos, "invalid entity for identifier %.*s", LIT(e->name));
-			break;
 		}
 		return o;
 	}
@@ -1525,10 +1609,18 @@ Operand check_expr(Checker *c, AstExpr *expr) {
 }
 
 Type *check_type(Checker *c, AstType *type_expr) {
+	return check_type_expr(c, type_expr, NULL);
+}
+
+
+Type *check_type_expr_internal(Checker *c, AstType *type_expr, Type *named_type) {
 	ASSERT(type_expr != NULL);
 	switch (type_expr->kind) {
 	case AstType_Ident: {
-		Entity *e = check_ident(c, type_expr->ident);
+		Entity *e;
+		Operand o = {0};
+		o.expr = type_expr->ident;
+		e = check_ident(c, &o, type_expr->ident);
 		if (e == NULL) {
 			return NULL;
 		}
@@ -1627,6 +1719,31 @@ Type *check_type(Checker *c, AstType *type_expr) {
 	}
 	error(type_expr->pos, "expected a type");
 	return t_invalid;
+}
+
+Type *check_type_expr(Checker *c, AstType *type_expr, Type *named_type) {
+	Type *type = check_type_expr_internal(c, type_expr, named_type);
+	if (type == NULL) {
+		char *str = type_expr_to_string(type_expr);
+		error(type_expr->pos, "%s is not a type", str);
+		mem_free(str);
+		type = t_invalid;
+	}
+
+	if (type->kind == Type_Named && type->named.base == NULL) {
+		type->named.base = t_invalid;
+	}
+
+	if (is_type_typed(type)) {
+		// add_expr_info(c, type_expr, Addressing_Type, type, empty_const_value);
+	} else {
+		char *name = type_to_string(type);
+		error(type_expr->pos, "invalid type definition of %s", name);
+		mem_free(name);
+		type = t_invalid;
+	}
+	set_base_type(named_type, type);
+	return type;
 }
 
 
@@ -1817,6 +1934,57 @@ char *expr_to_string_internal(char *str, AstExpr *expr) {
 	return str;
 }
 
+char *type_expr_to_string_internal(char *str, AstType *type) {
+	isize i;
+	if (type == NULL) {
+		return buf_printf(str, "<invalid type expr>");
+	}
+	switch (type->kind) {
+	case AstType_Ident:
+		return expr_to_string_internal(str, type->ident);
+	case AstType_Array:
+		buf_printf(str, "[");
+		expr_to_string_internal(str, type->array.size);
+		buf_printf(str, "]");
+		type_expr_to_string_internal(str, type->array.elem);
+		return str;
+	case AstType_Set:
+		buf_printf(str, "set[");
+		for (i = 0; i < type->set.elem_count; i++) {
+			if (i > 0) buf_printf(str, ", ");
+			expr_to_string_internal(str, type->set.elems[i]);
+		}
+		buf_printf(str, "]");
+		return str;
+	case AstType_Range:
+		buf_printf(str, "range ");
+		expr_to_string_internal(str, type->range.from);
+		buf_printf(str, "%.*s", LIT(type->range.token.string));
+		expr_to_string_internal(str, type->range.to);
+		return str;
+	case AstType_Pointer:
+		buf_printf(str, "^");
+		type_expr_to_string_internal(str, type->pointer.elem);
+		return str;
+	case AstType_Signature:
+		buf_printf(str, "proc(");
+		for (i = 0; i < type->signature.param_count; i++) {
+			AstField *p = &type->signature.params[i];
+			if (i > 0) buf_printf(str, ", ");
+			expr_to_string_internal(str, p->name);
+			buf_printf(str, ": ");
+			type_expr_to_string_internal(str, p->type);
+		}
+		buf_printf(str, ")");
+		if (type->signature.return_type != NULL) {
+			buf_printf(str, ": ");
+			type_expr_to_string_internal(str, type->signature.return_type);
+		}
+		return str;
+	}
+	return str;
+}
+
 char *expr_to_string(AstExpr *expr) {
 	char *buf, *str;
 	buf = expr_to_string_internal(NULL, expr);
@@ -1825,6 +1993,17 @@ char *expr_to_string(AstExpr *expr) {
 	buf_free(buf);
 	return str;
 }
+
+
+char *type_expr_to_string(AstType *expr) {
+	char *buf, *str;
+	buf = type_expr_to_string_internal(NULL, expr);
+	buf_push(buf, 0);
+	str = MEM_DUP_ARRAY(buf, buf_len(buf));
+	buf_free(buf);
+	return str;
+}
+
 
 
 

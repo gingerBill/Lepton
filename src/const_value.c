@@ -22,7 +22,7 @@ struct ConstValue {
 	};
 };
 
-static ConstValue const empty_exact_value = {0};
+static ConstValue const empty_const_value = {0};
 
 
 ConstValue const_value_from_literal(Token lit);
@@ -232,7 +232,7 @@ ConstValue const_value_binary(TokenKind op, ConstValue x, ConstValue y) {
 	}
 
 error:;
-	return empty_exact_value;
+	return empty_const_value;
 }
 
 ConstValue const_value_to_integer(ConstValue v) {
@@ -249,7 +249,7 @@ ConstValue const_value_to_integer(ConstValue v) {
 	}
 
 	}
-	return empty_exact_value;
+	return empty_const_value;
 }
 
 ConstValue const_value_to_float(ConstValue v) {
@@ -259,5 +259,5 @@ ConstValue const_value_to_float(ConstValue v) {
 	case ConstValue_Float:
 		return v;
 	}
-	return empty_exact_value;
+	return empty_const_value;
 }

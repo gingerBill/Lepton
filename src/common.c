@@ -356,7 +356,7 @@ typedef struct BufferHeader {
 #define buf_reserve(b, n) ((n) <= buf_cap(b) ? 0 : ((b) = buf__grow((b), (n), sizeof(*(b)))))
 #define buf_resize(b, n) (buf_reserve(b, n), (buf__hdr(b)->len = (n)), (b))
 #define buf_push(b, ...) (buf_reserve((b), 1 + buf_len(b)), (b)[buf__hdr(b)->len++] = (__VA_ARGS__), (b))
-#define buf_pop(b) ((b) ? (buf_len(b) > 0, buf__hdr(b)->len--) : 0)
+#define buf_pop(b) ((b) ? (buf__hdr(b)->len--) : 0)
 #define buf_clear(b) ((b) ? buf__hdr(b)->len = 0 : 0)
 
 #define buf_printf(b, ...) ((b) = buf__printf((b), __VA_ARGS__))
