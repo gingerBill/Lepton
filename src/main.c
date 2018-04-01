@@ -32,7 +32,7 @@ int main(int argc, char **argv) {
 	{
 		AstPackage *p = MEM_NEW(AstPackage);
 		ParserError err = parse_package(p, argv[2]);
-		if (err == ParserError_None) {
+		if (err == ParserError_None && global_error_count == 0) {
 			Checker c = {0};
 			checker_init(&c);
 			check_package(&c, p);

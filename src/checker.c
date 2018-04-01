@@ -1967,7 +1967,7 @@ Type *check_type_expr_internal(Checker *c, AstType *type_expr, Type *named_type)
 	}
 	case AstType_Signature: {
 		Type *proc_type = NULL;
-		isize i;
+		isize i, j;
 		Entity **fields = NULL;
 		Type *ret = NULL;
 
@@ -1976,13 +1976,18 @@ Type *check_type_expr_internal(Checker *c, AstType *type_expr, Type *named_type)
 		for (i = 0; i < type_expr->signature.param_count; i++) {
 			AstField f = type_expr->signature.params[i];
 			Type *t = check_type(c, f.type);
-			Entity *e = alloc_entity(Entity_Var, f.name, NULL);
-			e->type = t;
-			e->state = EntityState_Resolved;
-			e->flags |= EntityFlag_Param;
-			add_entity(c, e);
-			add_entity_use(c, f.name, e);
-			buf_push(fields, e);
+			for (j = 0; j < f.name_count; j++) {
+				Entity *e = NULL;
+				AstExpr *name = f.names[j];
+
+				e = alloc_entity(Entity_Var, name, NULL);
+				e->type = t;
+				e->state = EntityState_Resolved;
+				e->flags |= EntityFlag_Param;
+				add_entity(c, e);
+				add_entity_use(c, name, e);
+				buf_push(fields, e);
+			}
 		}
 
 		if (type_expr->signature.return_type != NULL) {
@@ -2214,7 +2219,7 @@ char *expr_to_string_internal(char *str, AstExpr *expr) {
 }
 
 char *type_expr_to_string_internal(char *str, AstType *type) {
-	isize i;
+	isize i, j;
 	if (type == NULL) {
 		return buf_printf(str, "<invalid type expr>");
 	}
@@ -2250,7 +2255,10 @@ char *type_expr_to_string_internal(char *str, AstType *type) {
 		for (i = 0; i < type->signature.param_count; i++) {
 			AstField *p = &type->signature.params[i];
 			if (i > 0) buf_printf(str, ", ");
-			expr_to_string_internal(str, p->name);
+			for (j = 0; j < p->name_count; j++) {
+				if (j > 0) buf_printf(str, ", ");
+				expr_to_string_internal(str, p->names[j]);
+			}
 			buf_printf(str, ": ");
 			type_expr_to_string_internal(str, p->type);
 		}

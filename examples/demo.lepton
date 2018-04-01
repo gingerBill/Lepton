@@ -3,6 +3,8 @@ var x = 123
 var y = x * 2
 type Vector [3]float32
 
+type MyProc proc(int, float64);
+
 proc f(): int {
 	type SmallInt range -10..10
 	var x: int = 123

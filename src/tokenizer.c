@@ -138,6 +138,8 @@ typedef struct Token {
 	TokenPos  pos;
 } Token;
 
+static Token const blank_ident = {Token_Ident, str_lit("_")};
+
 typedef struct Tokenizer {
 	String fullpath;
 	char *start;

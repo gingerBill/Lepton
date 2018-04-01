@@ -68,6 +68,28 @@ Token expect_operator(Parser *p) {
 	return curr;
 }
 
+Token expect_semicolon(Parser *p) {
+	Token prev = p->prev_token;
+	Token curr = p->curr_token;
+	switch (curr.kind) {
+	case Token_Semicolon:
+		goto end;
+
+	case Token_CloseParen:
+	case Token_CloseBracket:
+		if (prev.pos.line == curr.pos.line) {
+			goto end;
+		}
+		goto error;
+	}
+
+error:
+	error(curr.pos, "expected as semicolon, got '%.*s'", LIT(token_strings[curr.kind]));
+end:
+	next_token(p);
+	return curr;
+}
+
 bool allow_token(Parser *p, TokenKind kind) {
 	if (p->curr_token.kind == kind) {
 		next_token(p);
@@ -174,7 +196,7 @@ AstExpr *parse_atom_expr(Parser *p, AstExpr *operand, bool lhs) {
 			Token prev = p->curr_token;
 			error(prev.pos, "expected an operand");
 			next_token(p);
-			operand = alloc_ast_expr(AstExpr_Invalid, prev.pos, p->curr_token.pos);
+			return alloc_ast_expr(AstExpr_Invalid, prev.pos, p->curr_token.pos);
 		}
 	}
 
@@ -275,12 +297,76 @@ AstExpr *parse_expr(Parser *p, bool lhs) {
 }
 
 
+AstExpr **parse_ident_list(Parser *p, isize *count) {
+	AstExpr **res = NULL;
+	AstExpr **list = NULL;
+	ASSERT(count != NULL);
+	for (;;) {
+		buf_push(list, parse_ident(p));
+		if (p->curr_token.kind != Token_Comma ||
+		    p->curr_token.kind == Token_EOF) {
+			break;
+		}
+		next_token(p);
+	}
+
+	*count = buf_len(list);
+	res = AST_DUP_ARRAY(list, buf_len(list));
+	buf_free(list);
+	return res;
+}
+
+void convert_to_ident_list(Parser *p, AstExpr **list, isize count) {
+	isize i;
+	for (i = 0; i < count; i++) {
+		AstExpr *ident = list[i];
+		switch (ident->kind) {
+		case AstExpr_Ident:
+		case AstExpr_Invalid:
+			break;
+		default:
+			error(ident->pos, "expected an identifier");
+			ident = ast_expr_ident(blank_ident);
+			break;
+		}
+		list[i] = ident;
+	}
+}
+
+
 AstField parse_field(Parser *p) {
 	AstField field = {0};
-	field.name = parse_ident(p);
+	field.names = parse_ident_list(p, &field.name_count);
 	expect_token(p, Token_Colon);
 	field.type = parse_type(p);
 	return field;
+}
+
+AstExpr **parse_expr_list(Parser *p, bool lhs, isize *count) {
+	AstExpr **res = NULL;
+	AstExpr **list = NULL;
+	ASSERT(count != NULL);
+	for (;;) {
+		AstExpr *expr = parse_expr(p, lhs);
+		if (expr == NULL) {
+			Token tok = p->curr_token;
+			error(tok.pos, "bad expression, got %.*s", LIT(tok.string));
+			expr = alloc_ast_expr(AstExpr_Invalid, tok.pos, token_end_pos(tok));
+			buf_push(list, expr);
+			break;
+		}
+		buf_push(list, expr);
+		if (p->curr_token.kind != Token_Comma ||
+		    p->curr_token.kind == Token_EOF) {
+			break;
+		}
+		next_token(p);
+	}
+
+	*count = buf_len(list);
+	res = AST_DUP_ARRAY(list, buf_len(list));
+	buf_free(list);
+	return res;
 }
 
 AstType *parse_signature(Parser *p, Token token) {
@@ -290,15 +376,62 @@ AstType *parse_signature(Parser *p, Token token) {
 	AstType *return_type = NULL;
 
 	open = expect_token(p, Token_OpenParen);
-	while (p->curr_token.kind != Token_CloseParen &&
-	       p->curr_token.kind != Token_EOF) {
-		buf_push(params, parse_field(p));
-		if (!allow_token(p, Token_Comma)) {
-			break;
+	if (p->curr_token.kind != Token_CloseParen &&
+	    p->curr_token.kind != Token_EOF) {
+		isize list_count = 0;
+		AstExpr **list = parse_expr_list(p, true, &list_count); // NOTE(bill): Could be identifiers or types
+
+		if (p->curr_token.kind == Token_Colon) {
+			AstField field = {0};
+			convert_to_ident_list(p, list, list_count);
+			field.names = list;
+			field.name_count = list_count;
+			expect_token(p, Token_Colon);
+			field.type = parse_type(p);
+			buf_push(params, field);
+			if (allow_token(p, Token_Comma)) {
+				while (p->curr_token.kind != Token_CloseParen &&
+				       p->curr_token.kind != Token_EOF) {
+					buf_push(params, parse_field(p));
+					if (!allow_token(p, Token_Comma)) {
+						break;
+					}
+				}
+			}
+		} else {
+			isize i;
+			for (i = 0; i < list_count; i++) {
+				AstExpr *expr = list[i];
+				AstField field = {0};
+				AstType *type = NULL;
+				switch (expr->kind) {
+				case AstExpr_TypeExpr:
+					type = expr->type_expr;
+					break;
+				case AstExpr_Ident:
+					type = ast_type_ident(expr);
+					break;
+				default:
+					error(expr->pos, "expected a type in signature list");
+					continue;
+				}
+
+				field.type = type;
+				{
+					AstExpr **names = ast_alloc(sizeof(AstExpr *));
+					Token token = blank_ident;
+					token.pos = expr->pos;
+					names[0] = ast_expr_ident(token);
+					field.names = names;
+					field.name_count = 1;
+					buf_push(params, field);
+				}
+			}
 		}
+
 	}
 	close = expect_token(p, Token_CloseParen);
-	end = close.pos;
+	end = token_end_pos(close);
 
 	if (allow_token(p, Token_Colon)) {
 		return_type = parse_type(p);
@@ -500,6 +633,7 @@ AstStmt *parse_simple_stmt(Parser *p) {
 }
 
 AstStmt *parse_stmt(Parser *p) {
+	AstStmt *stmt = NULL;
 	switch (p->curr_token.kind) {
 	case Token_var:
 	case Token_const:
@@ -511,7 +645,9 @@ AstStmt *parse_stmt(Parser *p) {
 	case Token_label: {
 		Token token = expect_token(p, Token_label);
 		AstExpr *name = parse_ident(p);
-		return ast_stmt_label(token, name);
+		stmt = ast_stmt_label(token, name);
+		expect_semicolon(p);
+		return stmt;
 	}
 
 	case Token_Ident:
@@ -524,13 +660,15 @@ AstStmt *parse_stmt(Parser *p) {
 	case Token_Add:
 	case Token_Sub:
 	case Token_At:
-		return parse_simple_stmt(p);
+		stmt = parse_simple_stmt(p);
+		expect_semicolon(p);
+		return stmt;
 
 	case Token_OpenBrace:
 		return parse_body(p);
 
 	case Token_Semicolon:
-		return ast_stmt_empty(expect_token(p, Token_Semicolon));
+		return ast_stmt_empty(expect_semicolon(p));
 
 	case Token_if:     return parse_if_stmt(p);
 	case Token_for:    return parse_for_stmt(p);
@@ -541,17 +679,22 @@ AstStmt *parse_stmt(Parser *p) {
 	case Token_continue:
 	case Token_fallthrough: {
 		Token token = next_token(p);
-		return ast_stmt_branch(token);
+		stmt = ast_stmt_branch(token);
+		expect_semicolon(p);
+		return stmt;
 	}
 
 	case Token_goto: {
 		Token token = expect_token(p, Token_goto);
 		AstExpr *name = parse_ident(p);
-		return ast_stmt_goto(token, name);
+		stmt = ast_stmt_goto(token, name);
+		expect_semicolon(p);
+		return stmt;
 	}
-
 	}
-	return ast_stmt_expr(parse_expr(p, true));
+	stmt = ast_stmt_expr(parse_expr(p, true));
+	expect_semicolon(p);
+	return stmt;
 }
 
 
@@ -646,6 +789,7 @@ AstDecl *parse_decl_proc(Parser *p) {
 }
 AstDecl *parse_decl_import(Parser *p) {
 	Token token = expect_token(p, Token_import);
+	Token path = expect_token(p, Token_String);
 	return NULL;
 }
 
@@ -658,8 +802,7 @@ AstDecl *parse_decl(Parser *p) {
 	case Token_import: return parse_decl_import(p);
 
 	case Token_Semicolon:
-		expect_token(p, Token_Semicolon);
-		return parse_decl(p);
+		return ast_decl_empty(expect_semicolon(p));
 	case Token_EOF:
 		return NULL;
 	}
@@ -680,7 +823,7 @@ ParserError parse_package(AstPackage *package, char const *package_path) {
 	while (p.curr_token.kind != Token_EOF) {
 		AstStmt *stmt = parse_stmt(&p);
 		if (stmt == NULL) {
-			break;
+			continue;
 		}
 
 		switch (stmt->kind) {

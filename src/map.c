@@ -238,7 +238,7 @@ void map_remove(Map *m, HashKey key) {
 
 		n = buf_len(m->entries);
 		if (fr.entry_index == n-1) {
-			buf_pop(m->entries);
+		buf_pop(m->entries);
 			return;
 		}
 		m->entries[fr.entry_index] = m->entries[n-1];

@@ -90,7 +90,8 @@ enum AstTypeKind {
 };
 
 struct AstField {
-	AstExpr *name;
+	AstExpr **names;
+	isize     name_count;
 	AstType *type;
 };
 
@@ -204,6 +205,8 @@ struct AstStmt {
 enum AstDeclKind {
 	AstDecl_Invalid,
 
+	AstDecl_Empty,
+
 	AstDecl_Var,
 	AstDecl_Const,
 	AstDecl_Type,
@@ -217,6 +220,7 @@ struct AstDecl {
 	AstDeclKind kind;
 	TokenPos pos, end;
 	union {
+		Token empty_decl;
 		struct {
 			Token token;
 			AstExpr **lhs;
@@ -513,8 +517,11 @@ AstStmt *ast_stmt_goto(Token token, AstExpr *label) {
 	return s;
 }
 
-
-
+AstDecl *ast_decl_empty(Token token) {
+	AstDecl *d = alloc_ast_decl(AstDecl_Empty, token.pos, token_end_pos(token));
+	d->empty_decl = token;
+	return d;
+}
 AstDecl *ast_decl_var(Token token, AstExpr **lhs, isize lhs_count, AstType *type, AstExpr **rhs, isize rhs_count) {
 	AstDecl *d;
 	TokenPos end;
